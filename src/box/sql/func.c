@@ -195,6 +195,9 @@ typeofFunc(sql_context * context, int NotUsed, sql_value ** argv)
 	case MEM_TYPE_UUID:
 		z = "uuid";
 		break;
+	case MEM_TYPE_DECIMAL:
+		z = "decimal";
+		break;
 	default:
 		unreachable();
 		break;
@@ -1119,6 +1122,7 @@ quoteFunc(sql_context * context, int argc, sql_value ** argv)
 		sql_result_text(context, buf, UUID_STR_LEN, SQL_TRANSIENT);
 		break;
 	}
+	case MEM_TYPE_DECIMAL:
 	case MEM_TYPE_UINT:
 	case MEM_TYPE_INT: {
 			sql_result_value(context, argv[0]);

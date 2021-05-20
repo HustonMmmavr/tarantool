@@ -28,6 +28,8 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+#include <ctype.h>
+
 #include "sqlInt.h"
 #include "mem.h"
 #include "vdbeInt.h"
@@ -41,6 +43,7 @@
 #include "lua/msgpack.h"
 #include "uuid/mp_uuid.h"
 #include "mp_decimal.h"
+#include "lua/decimal.h"
 
 /*
  * Make sure pMem->z points to a writable allocation of at least
@@ -63,6 +66,8 @@ mem_is_field_compatible(const struct Mem *mem, enum field_type type)
 {
 	if (mem->type == MEM_TYPE_UUID)
 		return (field_ext_type[type] & (1U << MP_UUID)) != 0;
+	if (mem->type == MEM_TYPE_DECIMAL)
+		return (field_ext_type[type] & (1U << MP_DECIMAL)) != 0;
 	enum mp_type mp_type = mem_mp_type(mem);
 	assert(mp_type != MP_EXT);
 	return field_mp_plain_type_is_compatible(type, mp_type, true);
@@ -93,6 +98,8 @@ mem_str(const struct Mem *mem)
 		return mp_str(mem->z);
 	case MEM_TYPE_UUID:
 		return tt_uuid_str(&mem->u.uuid);
+	case MEM_TYPE_DECIMAL:
+		return decimal_to_string(&mem->u.dec);
 	case MEM_TYPE_BOOL:
 		return mem->u.b ? "TRUE" : "FALSE";
 	default:
@@ -209,6 +216,16 @@ mem_set_uuid(struct Mem *mem, const struct tt_uuid *uuid)
 	mem->field_type = FIELD_TYPE_UUID;
 	mem->u.uuid = *uuid;
 	mem->type = MEM_TYPE_UUID;
+	assert(mem->flags == 0);
+}
+
+void
+mem_set_dec(struct Mem *mem, decimal_t *dec)
+{
+	mem_clear(mem);
+	mem->field_type = FIELD_TYPE_DECIMAL;
+	mem->u.dec = *dec;
+	mem->type = MEM_TYPE_DECIMAL;
 	assert(mem->flags == 0);
 }
 
@@ -547,6 +564,23 @@ mem_set_null_clear(struct Mem *mem)
 }
 
 static inline int
+int_to_dec(struct Mem *mem)
+{
+	assert((mem->type & (MEM_TYPE_INT | MEM_TYPE_UINT)) != 0);
+	decimal_t dec;
+	decimal_t *res = mem->type == MEM_TYPE_UINT ?
+			 decimal_from_uint64(&dec, mem->u.u) :
+			 decimal_from_int64(&dec, mem->u.i);
+	if (res == NULL)
+		return -1;
+	mem->u.dec = dec;
+	mem->type = MEM_TYPE_DECIMAL;
+	assert(mem->flags == 0);
+	mem->field_type = FIELD_TYPE_DECIMAL;
+	return 0;
+}
+
+static inline int
 int_to_double(struct Mem *mem)
 {
 	assert((mem->type & (MEM_TYPE_INT | MEM_TYPE_UINT)) != 0);
@@ -594,6 +628,21 @@ str_to_str0(struct Mem *mem)
 	mem->z[mem->n] = '\0';
 	mem->flags |= MEM_Term;
 	mem->field_type = FIELD_TYPE_STRING;
+	return 0;
+}
+
+static inline int
+str_to_dec(struct Mem *mem)
+{
+	assert(mem->type == MEM_TYPE_STR);
+	decimal_t dec;
+	const char *str = mem->z;
+	uint32_t len = mem->n;
+	for (; len > 0 && isspace(*str); str++, len--);
+	for (; len > 0 && isspace(str[len - 1]); len--);
+	if  (decimal_from_strl(&dec, str, len) == NULL)
+		return -1;
+	mem_set_dec(mem, &dec);
 	return 0;
 }
 
@@ -797,6 +846,20 @@ double_to_uint_precise(struct Mem *mem)
 }
 
 static inline int
+double_to_dec(struct Mem *mem)
+{
+	assert(mem->type == MEM_TYPE_DOUBLE);
+	decimal_t dec;
+	if (decimal_from_double(&dec, mem->u.r) == NULL)
+		return -1;
+	mem->u.dec = dec;
+	mem->type = MEM_TYPE_DECIMAL;
+	assert(mem->flags == 0);
+	mem->field_type = FIELD_TYPE_DECIMAL;
+	return 0;
+}
+
+static inline int
 double_to_str0(struct Mem *mem)
 {
 	assert(mem->type == MEM_TYPE_DOUBLE);
@@ -872,6 +935,54 @@ uuid_to_bin(struct Mem *mem)
 	return mem_copy_bin(mem, (char *)&mem->u.uuid, UUID_LEN);
 }
 
+static inline int
+dec_to_int(struct Mem *mem)
+{
+	assert(mem->type == MEM_TYPE_DECIMAL);
+	int64_t i;
+	bool is_neg;
+	if (decimal_to_int(&mem->u.dec, &i, &is_neg) == NULL)
+		return -1;
+	assert(mem->flags == 0);
+	mem->u.i = i;
+	mem->type = is_neg ? MEM_TYPE_INT : MEM_TYPE_UINT;
+	mem->field_type = FIELD_TYPE_INTEGER;
+	return 0;
+}
+
+static inline int
+dec_to_uint(struct Mem *mem)
+{
+	assert(mem->type == MEM_TYPE_DECIMAL);
+	uint64_t u;
+	if (decimal_to_uint64(&mem->u.dec, &u) == NULL)
+		return -1;
+	assert(mem->flags == 0);
+	mem->u.u = u;
+	mem->type = MEM_TYPE_UINT;
+	mem->field_type = FIELD_TYPE_INTEGER;
+	return 0;
+}
+
+static inline int
+dec_to_double(struct Mem *mem)
+{
+	assert(mem->type == MEM_TYPE_DECIMAL);
+	double d = decimal_to_double(&mem->u.dec);
+	assert(mem->flags == 0);
+	mem->u.r = d;
+	mem->type = MEM_TYPE_DOUBLE;
+	mem->field_type = FIELD_TYPE_DOUBLE;
+	return 0;
+}
+
+static inline int
+dec_to_str0(struct Mem *mem)
+{
+	assert(mem->type == MEM_TYPE_DECIMAL);
+	return mem_copy_str0(mem, decimal_to_string(&mem->u.dec));
+}
+
 int
 mem_to_int(struct Mem *mem)
 {
@@ -882,6 +993,8 @@ mem_to_int(struct Mem *mem)
 		return bytes_to_int(mem);
 	if (mem->type == MEM_TYPE_DOUBLE)
 		return double_to_int(mem);
+	if (mem->type == MEM_TYPE_DECIMAL)
+		return dec_to_int(mem);
 	if (mem->type == MEM_TYPE_BOOL)
 		return bool_to_int(mem);
 	return -1;
@@ -895,6 +1008,8 @@ mem_to_int_precise(struct Mem *mem)
 		return 0;
 	if (mem->type == MEM_TYPE_STR)
 		return bytes_to_int(mem);
+	if (mem->type == MEM_TYPE_DECIMAL && decimal_is_int(&mem->u.dec))
+		return dec_to_int(mem);
 	if (mem->type == MEM_TYPE_DOUBLE)
 		return double_to_int_precise(mem);
 	return -1;
@@ -910,6 +1025,8 @@ mem_to_double(struct Mem *mem)
 		return int_to_double(mem);
 	if (mem->type == MEM_TYPE_STR)
 		return bytes_to_double(mem);
+	if (mem->type == MEM_TYPE_DECIMAL)
+		return dec_to_double(mem);
 	return -1;
 }
 
@@ -953,6 +1070,8 @@ mem_to_str0(struct Mem *mem)
 		return array_to_str0(mem);
 	case MEM_TYPE_UUID:
 		return uuid_to_str0(mem);
+	case MEM_TYPE_DECIMAL:
+		return dec_to_str0(mem);
 	default:
 		return -1;
 	}
@@ -980,6 +1099,8 @@ mem_to_str(struct Mem *mem)
 		return array_to_str0(mem);
 	case MEM_TYPE_UUID:
 		return uuid_to_str0(mem);
+	case MEM_TYPE_DECIMAL:
+		return dec_to_str0(mem);
 	default:
 		return -1;
 	}
@@ -1004,6 +1125,8 @@ mem_cast_explicit(struct Mem *mem, enum field_type type)
 			return double_to_int(mem);
 		case MEM_TYPE_BOOL:
 			return bool_to_int(mem);
+		case MEM_TYPE_DECIMAL:
+			return dec_to_uint(mem);
 		default:
 			return -1;
 		}
@@ -1045,6 +1168,16 @@ mem_cast_explicit(struct Mem *mem, enum field_type type)
 		if (mem->type == MEM_TYPE_BIN)
 			return bin_to_uuid(mem);
 		return -1;
+	case FIELD_TYPE_DECIMAL:
+		if (mem->type == MEM_TYPE_DECIMAL)
+			return 0;
+		if (mem->type == MEM_TYPE_STR)
+			return str_to_dec(mem);
+		if ((mem->type & (MEM_TYPE_INT | MEM_TYPE_UINT)) != 0)
+			return int_to_dec(mem);
+		if (mem->type == MEM_TYPE_DOUBLE)
+			return double_to_dec(mem);
+		return -1;
 	case FIELD_TYPE_SCALAR:
 		if ((mem->type & (MEM_TYPE_MAP | MEM_TYPE_ARRAY)) != 0)
 			return -1;
@@ -1068,6 +1201,8 @@ mem_cast_implicit(struct Mem *mem, enum field_type type)
 			return 0;
 		if (mem->type == MEM_TYPE_DOUBLE)
 			return double_to_uint(mem);
+		if (mem->type == MEM_TYPE_DECIMAL)
+			return dec_to_uint(mem);
 		return -1;
 	case FIELD_TYPE_STRING:
 		if (mem->type == MEM_TYPE_STR)
@@ -1080,12 +1215,16 @@ mem_cast_implicit(struct Mem *mem, enum field_type type)
 			return 0;
 		if ((mem->type & (MEM_TYPE_INT | MEM_TYPE_UINT)) != 0)
 			return int_to_double(mem);
+		if (mem->type == MEM_TYPE_DECIMAL)
+			return dec_to_double(mem);
 		return -1;
 	case FIELD_TYPE_INTEGER:
 		if ((mem->type & (MEM_TYPE_INT | MEM_TYPE_UINT)) != 0)
 			return 0;
 		if (mem->type == MEM_TYPE_DOUBLE)
 			return double_to_int(mem);
+		if (mem->type == MEM_TYPE_DECIMAL)
+			return dec_to_int(mem);
 		return -1;
 	case FIELD_TYPE_BOOLEAN:
 		if (mem->type == MEM_TYPE_BOOL)
@@ -1122,6 +1261,14 @@ mem_cast_implicit(struct Mem *mem, enum field_type type)
 		if (mem->type == MEM_TYPE_BIN)
 			return bin_to_uuid(mem);
 		return -1;
+	case FIELD_TYPE_DECIMAL:
+		if (mem->type == MEM_TYPE_DECIMAL)
+			return 0;
+		if ((mem->type & (MEM_TYPE_INT | MEM_TYPE_UINT)) != 0)
+			return int_to_dec(mem);
+		if (mem->type == MEM_TYPE_DOUBLE)
+			return double_to_dec(mem);
+		return -1;
 	case FIELD_TYPE_ANY:
 		return 0;
 	default:
@@ -1143,6 +1290,8 @@ mem_cast_implicit_old(struct Mem *mem, enum field_type type)
 			return double_to_uint_precise(mem);
 		if (mem->type == MEM_TYPE_STR)
 			return bytes_to_uint(mem);
+		if (mem->type == MEM_TYPE_DECIMAL)
+			return dec_to_uint(mem);
 		return -1;
 	case FIELD_TYPE_STRING:
 		if ((mem->type & (MEM_TYPE_STR | MEM_TYPE_BIN)) != 0)
@@ -1153,6 +1302,8 @@ mem_cast_implicit_old(struct Mem *mem, enum field_type type)
 			return double_to_str0(mem);
 		if (mem->type == MEM_TYPE_UUID)
 			return uuid_to_str0(mem);
+		if (mem->type == MEM_TYPE_DECIMAL)
+			return dec_to_str0(mem);
 		return -1;
 	case FIELD_TYPE_DOUBLE:
 		if (mem->type == MEM_TYPE_DOUBLE)
@@ -1161,6 +1312,8 @@ mem_cast_implicit_old(struct Mem *mem, enum field_type type)
 			return int_to_double(mem);
 		if (mem->type == MEM_TYPE_STR)
 			return bin_to_str(mem);
+		if (mem->type == MEM_TYPE_DECIMAL)
+			return dec_to_double(mem);
 		return -1;
 	case FIELD_TYPE_INTEGER:
 		if ((mem->type & (MEM_TYPE_INT | MEM_TYPE_UINT)) != 0)
@@ -1169,6 +1322,8 @@ mem_cast_implicit_old(struct Mem *mem, enum field_type type)
 			return bytes_to_int(mem);
 		if (mem->type == MEM_TYPE_DOUBLE)
 			return double_to_int_precise(mem);
+		if (mem->type == MEM_TYPE_DECIMAL)
+			return dec_to_int(mem);
 		return -1;
 	case FIELD_TYPE_BOOLEAN:
 		if (mem->type == MEM_TYPE_BOOL)
@@ -1206,6 +1361,16 @@ mem_cast_implicit_old(struct Mem *mem, enum field_type type)
 		if (mem->type == MEM_TYPE_BIN)
 			return bin_to_uuid(mem);
 		return -1;
+	case FIELD_TYPE_DECIMAL:
+		if (mem->type == MEM_TYPE_DECIMAL)
+			return 0;
+		if (mem->type == MEM_TYPE_STR)
+			return str_to_dec(mem);
+		if ((mem->type & (MEM_TYPE_INT | MEM_TYPE_UINT)) != 0)
+			return int_to_dec(mem);
+		if (mem->type == MEM_TYPE_DOUBLE)
+			return double_to_dec(mem);
+		return -1;
 	default:
 		break;
 	}
@@ -1241,6 +1406,8 @@ mem_get_int(const struct Mem *mem, int64_t *i, bool *is_neg)
 		}
 		return -1;
 	}
+	if (mem->type == MEM_TYPE_DECIMAL)
+		return decimal_to_int(&mem->u.dec, i, is_neg) == NULL ? -1 : 0;
 	return -1;
 }
 
@@ -1268,6 +1435,8 @@ mem_get_uint(const struct Mem *mem, uint64_t *u)
 		}
 		return -1;
 	}
+	if (mem->type == MEM_TYPE_DECIMAL)
+		return decimal_to_uint64(&mem->u.dec, u) == NULL ? -1 : 0;
 	return -1;
 }
 
@@ -1289,6 +1458,10 @@ mem_get_double(const struct Mem *mem, double *d)
 	if (mem->type == MEM_TYPE_STR) {
 		if (sqlAtoF(mem->z, d, mem->n) == 0)
 			return -1;
+		return 0;
+	}
+	if (mem->type == MEM_TYPE_DECIMAL) {
+		*d = decimal_to_double(&mem->u.dec);
 		return 0;
 	}
 	return -1;
@@ -1475,6 +1648,7 @@ struct sql_num {
 		int64_t i;
 		uint64_t u;
 		double d;
+		decimal_t dec;
 	};
 	enum mem_type type;
 	bool is_neg;
@@ -1498,6 +1672,11 @@ get_number(const struct Mem *mem, struct sql_num *number)
 		number->u = mem->u.u;
 		number->type = MEM_TYPE_UINT;
 		number->is_neg = false;
+		return 0;
+	}
+	if (mem->type == MEM_TYPE_DECIMAL) {
+		number->dec = mem->u.dec;
+		number->type = MEM_TYPE_DECIMAL;
 		return 0;
 	}
 	if ((mem->type & (MEM_TYPE_STR | MEM_TYPE_BIN)) == 0)
@@ -1535,17 +1714,30 @@ arithmetic_prepare(const struct Mem *left, const struct Mem *right,
 		return -1;
 	}
 	assert(a->type != 0 && b->type != 0);
-	if (a->type == b->type || ((a->type | b->type) & MEM_TYPE_DOUBLE) == 0)
+	if (a->type == b->type ||
+	    ((a->type | b->type) & (MEM_TYPE_DOUBLE | MEM_TYPE_DECIMAL)) == 0)
 		return 0;
-	if (a->type == MEM_TYPE_DOUBLE) {
-		b->d = b->type == MEM_TYPE_INT ? (double)b->i : (double)b->u;
-		b->type = MEM_TYPE_DOUBLE;
+	if (((b->type | a->type) & MEM_TYPE_DOUBLE) != 0) {
+		struct sql_num *num = a->type == MEM_TYPE_DOUBLE ? b : a;
+		double d;
+		if (num->type == MEM_TYPE_INT)
+			d = (double)num->i;
+		else if (num->type == MEM_TYPE_UINT)
+			d = (double)num->u;
+		else
+			d = decimal_to_double(&num->dec);
+		num->d = d;
+		num->type = MEM_TYPE_DOUBLE;
 		return 0;
 	}
-	assert(b->type == MEM_TYPE_DOUBLE);
-	a->d = a->type == MEM_TYPE_INT ? (double)a->i : (double)a->u;
-	a->type = MEM_TYPE_DOUBLE;
-	return 0;
+	assert(((b->type | a->type) & MEM_TYPE_DECIMAL) != 0);
+	struct sql_num *num = a->type == MEM_TYPE_DECIMAL ? b : a;
+	int64_t i = num->i;
+	decimal_t *dec = num->type == MEM_TYPE_INT ?
+			 decimal_from_int64(&num->dec, i) :
+			 decimal_from_uint64(&num->dec, (uint64_t)i);
+	num->type = MEM_TYPE_DECIMAL;
+	return dec == NULL ? -1 : 0;
 }
 
 int
@@ -1562,6 +1754,20 @@ mem_add(const struct Mem *left, const struct Mem *right, struct Mem *result)
 	if (a.type == MEM_TYPE_DOUBLE) {
 		result->u.r = a.d + b.d;
 		result->type = MEM_TYPE_DOUBLE;
+		result->field_type = FIELD_TYPE_DOUBLE;
+		assert(result->flags == 0);
+		return 0;
+	}
+
+	assert(a.type != MEM_TYPE_DECIMAL || a.type == b.type);
+	if (a.type == MEM_TYPE_DECIMAL) {
+		if (decimal_add(&result->u.dec, &a.dec, &b.dec) == NULL) {
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 "decimal is overflowed");
+			return -1;
+		}
+		result->type = MEM_TYPE_DECIMAL;
+		result->field_type = FIELD_TYPE_DECIMAL;
 		assert(result->flags == 0);
 		return 0;
 	}
@@ -1574,6 +1780,7 @@ mem_add(const struct Mem *left, const struct Mem *right, struct Mem *result)
 	}
 	result->u.i = res;
 	result->type = is_neg ? MEM_TYPE_INT : MEM_TYPE_UINT;
+	result->field_type = FIELD_TYPE_INTEGER;
 	assert(result->flags == 0);
 	return 0;
 }
@@ -1592,6 +1799,20 @@ mem_sub(const struct Mem *left, const struct Mem *right, struct Mem *result)
 	if (a.type == MEM_TYPE_DOUBLE) {
 		result->u.r = a.d - b.d;
 		result->type = MEM_TYPE_DOUBLE;
+		result->field_type = FIELD_TYPE_DOUBLE;
+		assert(result->flags == 0);
+		return 0;
+	}
+
+	assert(a.type != MEM_TYPE_DECIMAL || a.type == b.type);
+	if (a.type == MEM_TYPE_DECIMAL) {
+		if (decimal_sub(&result->u.dec, &a.dec, &b.dec) == NULL) {
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 "decimal is overflowed");
+			return -1;
+		}
+		result->type = MEM_TYPE_DECIMAL;
+		result->field_type = FIELD_TYPE_DECIMAL;
 		assert(result->flags == 0);
 		return 0;
 	}
@@ -1604,6 +1825,7 @@ mem_sub(const struct Mem *left, const struct Mem *right, struct Mem *result)
 	}
 	result->u.i = res;
 	result->type = is_neg ? MEM_TYPE_INT : MEM_TYPE_UINT;
+	result->field_type = FIELD_TYPE_INTEGER;
 	assert(result->flags == 0);
 	return 0;
 }
@@ -1622,6 +1844,20 @@ mem_mul(const struct Mem *left, const struct Mem *right, struct Mem *result)
 	if (a.type == MEM_TYPE_DOUBLE) {
 		result->u.r = a.d * b.d;
 		result->type = MEM_TYPE_DOUBLE;
+		result->field_type = FIELD_TYPE_DOUBLE;
+		assert(result->flags == 0);
+		return 0;
+	}
+
+	assert(a.type != MEM_TYPE_DECIMAL || a.type == b.type);
+	if (a.type == MEM_TYPE_DECIMAL) {
+		if (decimal_mul(&result->u.dec, &a.dec, &b.dec) == NULL) {
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 "decimal is overflowed");
+			return -1;
+		}
+		result->type = MEM_TYPE_DECIMAL;
+		result->field_type = FIELD_TYPE_DECIMAL;
 		assert(result->flags == 0);
 		return 0;
 	}
@@ -1634,6 +1870,7 @@ mem_mul(const struct Mem *left, const struct Mem *right, struct Mem *result)
 	}
 	result->u.i = res;
 	result->type = is_neg ? MEM_TYPE_INT : MEM_TYPE_UINT;
+	result->field_type = FIELD_TYPE_INTEGER;
 	assert(result->flags == 0);
 	return 0;
 }
@@ -1657,6 +1894,20 @@ mem_div(const struct Mem *left, const struct Mem *right, struct Mem *result)
 		}
 		result->u.r = a.d / b.d;
 		result->type = MEM_TYPE_DOUBLE;
+		result->field_type = FIELD_TYPE_DOUBLE;
+		assert(result->flags == 0);
+		return 0;
+	}
+
+	assert(a.type != MEM_TYPE_DECIMAL || a.type == b.type);
+	if (a.type == MEM_TYPE_DECIMAL) {
+		if (decimal_div(&result->u.dec, &a.dec, &b.dec) == NULL) {
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 "decimal is overflowed");
+			return -1;
+		}
+		result->type = MEM_TYPE_DECIMAL;
+		result->field_type = FIELD_TYPE_DECIMAL;
 		assert(result->flags == 0);
 		return 0;
 	}
@@ -1673,6 +1924,7 @@ mem_div(const struct Mem *left, const struct Mem *right, struct Mem *result)
 	}
 	result->u.i = res;
 	result->type = is_neg ? MEM_TYPE_INT : MEM_TYPE_UINT;
+	result->field_type = FIELD_TYPE_INTEGER;
 	assert(result->flags == 0);
 	return 0;
 }
@@ -1902,8 +2154,8 @@ mem_cmp_num(const struct Mem *left, const struct Mem *right, int *result)
 	}
 	if (get_number(left, &a) != 0)
 		return -1;
-	if (a.type == MEM_TYPE_DOUBLE) {
-		if (b.type == MEM_TYPE_DOUBLE) {
+	if (((a.type | b.type) & MEM_TYPE_DOUBLE) != 0) {
+		if ((a.type & b.type & MEM_TYPE_DOUBLE) != 0) {
 			if (a.d > b.d)
 				*result = 1;
 			else if (a.d < b.d)
@@ -1912,14 +2164,58 @@ mem_cmp_num(const struct Mem *left, const struct Mem *right, int *result)
 				*result = 0;
 			return 0;
 		}
-		if (b.type == MEM_TYPE_INT)
+		if (b.type == MEM_TYPE_DECIMAL) {
+			*result = -decimal_compare_double(&b.dec, a.d);
+			return 0;
+		}
+		if (a.type == MEM_TYPE_DECIMAL) {
+			*result = decimal_compare_double(&a.dec, b.d);
+			return 0;
+		}
+		if (b.type == MEM_TYPE_INT) {
 			*result = double_compare_nint64(a.d, b.i, 1);
-		else
+			return 0;
+		}
+		if (b.type == MEM_TYPE_UINT) {
 			*result = double_compare_uint64(a.d, b.u, 1);
+			return 0;
+		}
+		if (a.type == MEM_TYPE_INT) {
+			*result = double_compare_nint64(b.d, a.i, -1);
+			return 0;
+		}
+		assert(a.type == MEM_TYPE_UINT);
+		*result = double_compare_uint64(b.d, a.u, -1);
 		return 0;
 	}
-	if (a.type == MEM_TYPE_INT) {
+	if (((a.type | b.type) & MEM_TYPE_DECIMAL) != 0) {
+		if ((a.type & b.type & MEM_TYPE_DECIMAL) != 0) {
+			*result = decimal_compare(&a.dec, &b.dec);
+			return 0;
+		}
+		decimal_t dec;
 		if (b.type == MEM_TYPE_INT) {
+			decimal_from_int64(&dec, b.i);
+			*result = decimal_compare(&a.dec, &dec);
+			return 0;
+		}
+		if (b.type == MEM_TYPE_UINT) {
+			decimal_from_uint64(&dec, b.u);
+			*result = decimal_compare(&a.dec, &dec);
+			return 0;
+		}
+		if (a.type == MEM_TYPE_INT) {
+			decimal_from_int64(&dec, a.i);
+			*result = decimal_compare(&dec, &b.dec);
+			return 0;
+		}
+		assert(a.type == MEM_TYPE_UINT);
+		decimal_from_uint64(&dec, a.u);
+		*result = decimal_compare(&dec, &b.dec);
+		return 0;
+	}
+	if (((a.type | b.type) & MEM_TYPE_INT) != 0) {
+		if ((a.type & b.type & MEM_TYPE_INT) != 0) {
 			if (a.i > b.i)
 				*result = 1;
 			else if (a.i < b.i)
@@ -1928,26 +2224,16 @@ mem_cmp_num(const struct Mem *left, const struct Mem *right, int *result)
 				*result = 0;
 			return 0;
 		}
-		if (b.type == MEM_TYPE_UINT)
-			*result = -1;
-		else
-			*result = double_compare_nint64(b.d, a.i, -1);
+		*result = b.type == MEM_TYPE_UINT ? -1 : 1;
 		return 0;
 	}
-	assert(a.type == MEM_TYPE_UINT);
-	if (b.type == MEM_TYPE_UINT) {
-		if (a.u > b.u)
-			*result = 1;
-		else if (a.u < b.u)
-			*result = -1;
-		else
-			*result = 0;
-		return 0;
-	}
-	if (b.type == MEM_TYPE_INT)
+	assert((a.type & b.type & MEM_TYPE_UINT) != 0);
+	if (a.u > b.u)
 		*result = 1;
+	else if (a.u < b.u)
+		*result = -1;
 	else
-		*result = double_compare_uint64(b.d, a.u, -1);
+		*result = 0;
 	return 0;
 }
 
@@ -2065,6 +2351,8 @@ mem_type_to_str(const struct Mem *p)
 		return "boolean";
 	case MEM_TYPE_UUID:
 		return "uuid";
+	case MEM_TYPE_DECIMAL:
+		return "decimal";
 	default:
 		unreachable();
 	}
@@ -2094,6 +2382,7 @@ mem_mp_type(const struct Mem *mem)
 	case MEM_TYPE_DOUBLE:
 		return MP_DOUBLE;
 	case MEM_TYPE_UUID:
+	case MEM_TYPE_DECIMAL:
 		return MP_EXT;
 	default:
 		unreachable();
@@ -2262,6 +2551,9 @@ memTracePrint(Mem *p)
 		return;
 	case MEM_TYPE_UUID:
 		printf(" uuid:%s", tt_uuid_str(&p->u.uuid));
+		return;
+	case MEM_TYPE_DECIMAL:
+		printf(" decimal:%s", decimal_to_string(&p->u.dec));
 		return;
 	default: {
 		char zBuf[200];
@@ -2489,8 +2781,8 @@ sqlMemCompare(const Mem * pMem1, const Mem * pMem2, const struct coll * pColl)
 
 	/* At least one of the two values is a number
 	 */
-	if (((type1 | type2) &
-	     (MEM_TYPE_INT | MEM_TYPE_UINT | MEM_TYPE_DOUBLE)) != 0) {
+	if (((type1 | type2) & (MEM_TYPE_INT | MEM_TYPE_UINT | MEM_TYPE_DOUBLE |
+				MEM_TYPE_DECIMAL)) != 0) {
 		if (!mem_is_num(pMem1))
 			return +1;
 		if (!mem_is_num(pMem2))
@@ -2710,6 +3002,12 @@ sqlVdbeCompareMsgpack(const char **key1,
 			    mem_cmp_uuid(&mem1, pKey2, &rc) != 0)
 				rc = 1;
 			break;
+		} else if (type == MP_DECIMAL) {
+			mem1.type = MEM_TYPE_DECIMAL;
+			if (mp_decode_decimal(&buf, &mem1.u.dec) == NULL ||
+			    mem_cmp_num(&mem1, pKey2, &rc) != 0)
+				rc = 1;
+			break;
 		}
 		aKey1 += len;
 		mem1.z = (char *)buf;
@@ -2783,6 +3081,14 @@ mem_from_mp_ephemeral(struct Mem *mem, const char *buf, uint32_t *len)
 			mem->type = MEM_TYPE_UUID;
 			mem->flags = 0;
 			mem->field_type = FIELD_TYPE_UUID;
+			break;
+		} else if (type == MP_DECIMAL) {
+			buf = svp;
+			if (mp_decode_decimal(&buf, &mem->u.dec) == NULL)
+				return -1;
+			mem->type = MEM_TYPE_DECIMAL;
+			mem->flags = 0;
+			mem->field_type = FIELD_TYPE_DECIMAL;
 			break;
 		}
 		buf += size;
@@ -2927,6 +3233,9 @@ mpstream_encode_vdbe_mem(struct mpstream *stream, struct Mem *var)
 	case MEM_TYPE_UUID:
 		mpstream_encode_uuid(stream, &var->u.uuid);
 		return;
+	case MEM_TYPE_DECIMAL:
+		mpstream_encode_decimal(stream, &var->u.dec);
+		return;
 	default:
 		unreachable();
 	}
@@ -3015,6 +3324,9 @@ port_vdbemem_dump_lua(struct port *base, struct lua_State *L, bool is_flat)
 			break;
 		case MEM_TYPE_UUID:
 			*luaL_pushuuid(L) = mem->u.uuid;
+			break;
+		case MEM_TYPE_DECIMAL:
+			*lua_pushdecimal(L) = mem->u.dec;
 			break;
 		default:
 			unreachable();
@@ -3138,26 +3450,11 @@ port_lua_get_vdbemem(struct port *base, uint32_t *size)
 		case MP_EXT: {
 			assert(field.ext_type == MP_UUID ||
 			       field.ext_type == MP_DECIMAL);
-			char *buf;
-			uint32_t size;
-			uint32_t svp = region_used(&fiber()->gc);
 			if (field.ext_type == MP_UUID) {
 				mem_set_uuid(&val[i], field.uuidval);
 				break;
-			} else {
-				size = mp_sizeof_decimal(field.decval);
-				buf = region_alloc(&fiber()->gc, size);
-				if (buf == NULL) {
-					diag_set(OutOfMemory, size,
-						 "region_alloc", "buf");
-					goto error;
-				}
-				mp_encode_decimal(buf, field.decval);
 			}
-			int rc = mem_copy_bin(&val[i], buf, size);
-			region_truncate(&fiber()->gc, svp);
-			if (rc != 0)
-				goto error;
+			mem_set_dec(&val[i], field.decval);
 			break;
 		}
 		case MP_NIL:
@@ -3260,6 +3557,13 @@ port_c_get_vdbemem(struct port *base, uint32_t *size)
 					goto error;
 				}
 				val[i].type = MEM_TYPE_UUID;
+				break;
+			} else if (type == MP_DECIMAL) {
+				decimal_t *dec = &val[i].u.dec;
+				data = str;
+				if (mp_decode_decimal(&data, dec) == NULL)
+					goto error;
+				val[i].type = MEM_TYPE_DECIMAL;
 				break;
 			}
 			data += len;

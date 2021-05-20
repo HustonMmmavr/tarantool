@@ -390,6 +390,8 @@ sql_type_result(enum field_type lhs, enum field_type rhs)
 			return FIELD_TYPE_NUMBER;
 		if (lhs == FIELD_TYPE_DOUBLE || rhs == FIELD_TYPE_DOUBLE)
 			return FIELD_TYPE_DOUBLE;
+		if (lhs == FIELD_TYPE_DECIMAL || rhs == FIELD_TYPE_DECIMAL)
+			return FIELD_TYPE_DECIMAL;
 		if (lhs == FIELD_TYPE_INTEGER || rhs == FIELD_TYPE_INTEGER)
 			return FIELD_TYPE_INTEGER;
 		assert(lhs == FIELD_TYPE_UNSIGNED ||
@@ -2231,6 +2233,7 @@ sqlExprCanBeNull(const Expr * p)
 	if (op == TK_REGISTER)
 		op = p->op2;
 	switch (op) {
+	case TK_DECIMAL:
 	case TK_INTEGER:
 	case TK_STRING:
 	case TK_FLOAT:
@@ -2259,6 +2262,8 @@ sql_expr_needs_no_type_change(const struct Expr *p, enum field_type type)
 	if (op == TK_REGISTER)
 		op = p->op2;
 	switch (op) {
+	case TK_DECIMAL:
+		return type == FIELD_TYPE_DECIMAL;
 	case TK_INTEGER:
 		return type == FIELD_TYPE_INTEGER;
 	case TK_FLOAT:
