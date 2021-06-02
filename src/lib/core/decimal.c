@@ -135,6 +135,27 @@ strtodec(decimal_t *dec, const char *str, const char **endptr) {
 }
 
 decimal_t *
+decimal_from_strl(decimal_t *dec, const char *str, uint32_t len)
+{
+	char buf[DECIMAL_MAX_DIGITS + 3];
+	/*
+	 * Buf with the size DECIMAL_MAX_DIGITS + 3 should be enough, because if
+	 * the length of the given valid string which is longer than this, there
+	 * are two possibilities:
+	 * 1) The value >= 10^DECIMAL_MAX_DIGITS, and in this case, after
+	 *    dropping everything after DECIMAL_MAX_DIGITS + 2, we will still
+	 *    get a value >= 10^DECIMAL_MAX_DIGITS. In this case, an error will
+	 *    be generated.
+	 * 2) The value is less than 10^DECIMAL_MAX_DIGITS, but has excess
+	 *    digits in fractional part. In this case, one additional digit
+	 *    after the last significant digit should be sufficient for
+	 *    rounding.
+	 */
+	snprintf(buf, sizeof(buf), "%.*s", len, str);
+	return decimal_from_string(dec, buf);
+}
+
+decimal_t *
 decimal_from_double(decimal_t *dec, double d)
 {
 	char buf[DECIMAL_MAX_DIGITS + 3];
@@ -214,6 +235,32 @@ decimal_to_uint64(const decimal_t *dec, uint64_t *num)
 	return decimal_check_status(&d, &decimal_context) != NULL ? dec : NULL;
 }
 
+static bool
+is_decimal_negative(const decimal_t *dec)
+{
+	return decNumberIsNegative(dec) && !decNumberIsZero(dec);
+}
+
+const decimal_t *
+decimal_to_int(const decimal_t *dec, int64_t *num, bool *is_neg)
+{
+	*is_neg = is_decimal_negative(dec);
+	if (*is_neg)
+		return decimal_to_int64(dec, num);
+	return decimal_to_uint64(dec, (uint64_t *)num);
+}
+
+double
+decimal_to_double(const decimal_t *dec)
+{
+	char buf[DECIMAL_MAX_DIGITS + 3];
+	char *tmp = decNumberToString(dec, buf);
+	assert(buf == tmp);
+	double d = strtod(buf, &tmp);
+	assert(tmp = buf + strlen(buf));
+	return d;
+}
+
 int
 decimal_compare(const decimal_t *lhs, const decimal_t *rhs)
 {
@@ -222,6 +269,46 @@ decimal_compare(const decimal_t *lhs, const decimal_t *rhs)
 	int r = decNumberToInt32(&res, &decimal_context);
 	assert(decimal_check_status(&res, &decimal_context) != NULL);
 	return r;
+}
+
+int
+decimal_compare_integer(const decimal_t *lhs, int64_t rhs, bool is_rhs_neg)
+{
+	bool is_lhs_neg = is_decimal_negative(lhs);
+	if (is_lhs_neg != is_rhs_neg)
+		return is_lhs_neg ? -1 : 1;
+	decimal_t rhs_dec;
+	if (is_rhs_neg)
+		decimal_from_int64(&rhs_dec, rhs);
+	else
+		decimal_from_uint64(&rhs_dec, (uint64_t)rhs);
+	return decimal_compare(lhs, &rhs_dec);
+}
+
+int
+decimal_compare_double(const decimal_t *lhs, double rhs)
+{
+	bool is_lhs_neg = is_decimal_negative(lhs);
+	bool is_rhs_neg = rhs < 0.;
+	if (is_lhs_neg != is_rhs_neg)
+		return is_lhs_neg ? -1 : 1;
+	int sign = is_rhs_neg ? -1 : 1;
+	double rhs_abs = rhs * sign;
+	if (rhs_abs < 1e-38)
+		return sign;
+	if (rhs_abs > 1e38)
+		return -sign;
+	if (rhs_abs < 1e23) {
+		double lhs_double = decimal_to_double(lhs);
+		if (lhs_double < rhs)
+			return -1;
+		if (lhs_double > rhs)
+			return 1;
+		return 0;
+	}
+	decimal_t rhs_dec;
+	decimal_from_double(&rhs_dec, rhs);
+	return decimal_compare(lhs, &rhs_dec);
 }
 
 static decimal_t *

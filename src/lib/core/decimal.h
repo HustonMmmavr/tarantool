@@ -86,6 +86,18 @@ decimal_t *
 decimal_from_string(decimal_t *dec, const char *str);
 
 /**
+ * Initialize a decimal with a value from the string of given length.
+ *
+ * If the number is less, than 10^DECIMAL_MAX_DIGITS, but has excess digits in
+ * fractional part, it will be rounded.
+ *
+ * @return NULL if string is invalid or
+ * the number is too big (>= 10^DECIMAL_MAX_DIGITS)
+ */
+decimal_t *
+decimal_from_strl(decimal_t *dec, const char *str, uint32_t len);
+
+/**
  * Initialize a decimal with a value from the valid beginning
  * of the string.
  * If \a endptr is not NULL, store the address of the first
@@ -140,6 +152,12 @@ decimal_to_int64(const decimal_t *dec, int64_t *num);
 const decimal_t *
 decimal_to_uint64(const decimal_t *dec, uint64_t *num);
 
+const decimal_t *
+decimal_to_int(const decimal_t *dec, int64_t *num, bool *is_neg);
+
+double
+decimal_to_double(const decimal_t *dec);
+
 /**
  * Compare 2 decimal values.
  * @return -1, lhs < rhs,
@@ -148,6 +166,9 @@ decimal_to_uint64(const decimal_t *dec, uint64_t *num);
  */
 int
 decimal_compare(const decimal_t *lhs, const decimal_t *rhs);
+
+int
+decimal_compare_double(const decimal_t *lhs, double rhs);
 
 /**
  * Round a given decimal to have not more than
