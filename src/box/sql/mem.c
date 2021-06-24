@@ -1683,30 +1683,33 @@ mem_rem(const struct Mem *left, const struct Mem *right, struct Mem *result)
 	if (try_return_null(left, right, result, FIELD_TYPE_NUMBER))
 		return 0;
 
-	struct sql_num a, b;
-	if (arithmetic_prepare(left, right, &a, &b) != 0)
+	int64_t a;
+	int64_t b;
+	bool a_is_neg;
+	bool b_is_neg;
+	if (mem_get_int(right, &b, &b_is_neg) != 0) {
+		diag_set(ClientError, ER_SQL_TYPE_MISMATCH, mem_str(right),
+			 "integer");
 		return -1;
-
-	assert(a.type != MEM_TYPE_DOUBLE || a.type == b.type);
-	/*
-	 * TODO: This operation works wrong when double d > INT64_MAX and
-	 * d < UINT64_MAX. Also, there may be precision losses due to
-	 * conversion integer to double and back.
-	 */
-	a.i = a.type == MEM_TYPE_DOUBLE ? (int64_t)a.d : a.i;
-	b.i = b.type == MEM_TYPE_DOUBLE ? (int64_t)b.d : b.i;
-	if (b.i == 0) {
+	}
+	if (mem_get_int(left, &a, &a_is_neg) != 0) {
+		diag_set(ClientError, ER_SQL_TYPE_MISMATCH, mem_str(left),
+			 "integer");
+		return -1;
+	}
+	if (b == 0) {
 		diag_set(ClientError, ER_SQL_EXECUTE, "division by zero");
 		return -1;
 	}
 	int64_t res;
 	bool is_neg;
-	if (sql_rem_int(a.i, a.is_neg, b.i, b.is_neg, &res, &is_neg) != 0) {
+	if (sql_rem_int(a, a_is_neg, b, b_is_neg, &res, &is_neg) != 0) {
 		diag_set(ClientError, ER_SQL_EXECUTE, "integer is overflowed");
 		return -1;
 	}
 	result->u.i = res;
 	result->type = is_neg ? MEM_TYPE_INT : MEM_TYPE_UINT;
+	result->field_type = FIELD_TYPE_INTEGER;
 	assert(result->flags == 0);
 	return 0;
 }

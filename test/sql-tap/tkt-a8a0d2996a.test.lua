@@ -112,13 +112,13 @@ test:do_execsql_test(
         -- </3.3>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     3.4,
     [[
         SELECT typeof(x), typeof(y) FROM t WHERE 1=x%4 AND y=='1';
     ]], {
         -- <3.4>
-        "string", "string"
+        1, "Type mismatch: can not convert 1.0 to integer"
         -- </3.4>
     })
 
