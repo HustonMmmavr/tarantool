@@ -2480,8 +2480,8 @@ sqlMemCompare(const Mem * pMem1, const Mem * pMem2, const struct coll * pColl)
 		if (mem_cmp_uuid(pMem1, pMem2, &res) == 0)
 			return res;
 		if (type1 != MEM_TYPE_UUID)
-			return +1;
-		return -1;
+			return -1;
+		return +1;
 	}
 
 	/* At least one of the two values is a number

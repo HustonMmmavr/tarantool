@@ -1,6 +1,8 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(1)
+test:plan(3)
+
+local uuid = require('uuid').fromstr('11111111-1111-1111-1111-111111111111')
 
 box.execute([[select quote(cast('11111111-1111-1111-1111-111111111111' as uuid));]])
 
@@ -11,6 +13,23 @@ test:do_execsql_test(
         SELECT quote(cast('11111111-1111-1111-1111-111111111111' as uuid));
     ]], {
         '11111111-1111-1111-1111-111111111111'
+    })
+
+-- Make sure that functions greatest() and least() can properly work with uuid.
+test:do_execsql_test(
+    "gh-6164-2",
+    [[
+        SELECT GREATEST(true, 1, x'33', cast('11111111-1111-1111-1111-111111111111' as uuid), 1e10);
+    ]], {
+        uuid
+    })
+
+test:do_execsql_test(
+    "gh-6164-3",
+    [[
+        SELECT LEAST(true, 1, x'33', cast('11111111-1111-1111-1111-111111111111' as uuid), 1e10);
+    ]], {
+        true
     })
 
 test:finish_test()
