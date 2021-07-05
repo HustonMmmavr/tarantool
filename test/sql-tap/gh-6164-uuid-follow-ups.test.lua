@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(3)
+test:plan(4)
 
 local uuid = require('uuid').fromstr('11111111-1111-1111-1111-111111111111')
 
@@ -31,5 +31,19 @@ test:do_execsql_test(
     ]], {
         true
     })
+
+-- Make sure that uuid value can be binded.
+box.execute('CREATE TABLE t(i INT PRIMARY KEY, a UUID);')
+box.execute('INSERT INTO t VALUES(1, ?);', {uuid});
+
+test:do_execsql_test(
+    "gh-6164-4",
+    [[
+        SELECT * FROM t;
+    ]], {
+        1, uuid
+    })
+
+box.execute([[DROP TABLE t;]])
 
 test:finish_test()
