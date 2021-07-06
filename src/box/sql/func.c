@@ -254,27 +254,33 @@ absFunc(sql_context * context, int argc, sql_value ** argv)
 {
 	assert(argc == 1);
 	UNUSED_PARAMETER(argc);
-	switch (sql_value_type(argv[0])) {
-	case MP_UINT: {
+	switch (argv[0]->type) {
+	case MEM_TYPE_UINT: {
 		sql_result_uint(context, mem_get_uint_unsafe(argv[0]));
 		break;
 	}
-	case MP_INT: {
+	case MEM_TYPE_INT: {
 		int64_t value = mem_get_int_unsafe(argv[0]);
 		assert(value < 0);
 		sql_result_uint(context, -value);
 		break;
 	}
-	case MP_NIL:{
+	case MEM_TYPE_DECIMAL: {
+		decimal_t dec;
+		decimal_abs(&dec, &argv[0]->u.dec);
+		mem_set_dec(context->pOut, &dec);
+		break;
+	}
+	case MEM_TYPE_NULL: {
 			/* IMP: R-37434-19929 Abs(X) returns NULL if X is NULL. */
 			sql_result_null(context);
 			break;
 		}
-	case MP_BOOL:
-	case MP_BIN:
-	case MP_EXT:
-	case MP_ARRAY:
-	case MP_MAP: {
+	case MEM_TYPE_BOOL:
+	case MEM_TYPE_BIN:
+	case MEM_TYPE_UUID:
+	case MEM_TYPE_ARRAY:
+	case MEM_TYPE_MAP: {
 		diag_set(ClientError, ER_INCONSISTENT_TYPES, "number",
 			 mem_type_to_str(argv[0]));
 		context->is_aborted = true;

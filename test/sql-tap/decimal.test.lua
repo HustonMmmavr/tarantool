@@ -172,362 +172,362 @@ test:do_execsql_test(
         "/OpenTEphemeral/"
     })
 
--- test:execsql([[
---     CREATE TABLE t5f (u UUID PRIMARY KEY, f UUID REFERENCES t5f(u));
---     CREATE TABLE t5c (i INT PRIMARY KEY, f UUID, CONSTRAINT ck CHECK(CAST(f AS STRING) != '11111111-1111-1111-1111-111111111111'));
---     CREATE TABLE t5u (i INT PRIMARY KEY, f UUID UNIQUE);
--- ]])
+test:execsql([[
+    CREATE TABLE t5f (d1 DECIMAL PRIMARY KEY, d2 DECIMAL REFERENCES t5f(d1));
+    CREATE TABLE t5c (i INT PRIMARY KEY, d DECIMAL, CONSTRAINT ck CHECK(CAST(d AS STRING) != '1000'));
+    CREATE TABLE t5u (i INT PRIMARY KEY, d DECIMAL UNIQUE);
+]])
 
--- -- Check that FOREIGN KEY constraint can work with UUID.
--- test:do_catchsql_test(
---     "uuid-5.1.1",
---     [[
---         INSERT INTO t5f SELECT (SELECT u from t2 LIMIT 1 OFFSET 1), (SELECT u from t2 LIMIT 1);
---     ]], {
---         1, "Failed to execute SQL statement: FOREIGN KEY constraint failed"
---     })
+-- Check that FOREIGN KEY constraint can work with DECIMAL.
+test:do_catchsql_test(
+    "dec-5.1.1",
+    [[
+        INSERT INTO t5f SELECT (SELECT d from t2 LIMIT 1 OFFSET 1), (SELECT d from t2 LIMIT 1);
+    ]], {
+        1, "Failed to execute SQL statement: FOREIGN KEY constraint failed"
+    })
 
--- test:do_execsql_test(
---     "uuid-5.1.2",
---     [[
---         INSERT INTO t5f SELECT u, u from t2 LIMIT 1;
---         SELECT * from t5f;
---     ]], {
---         uuid1, uuid1
---     })
+test:do_execsql_test(
+    "dec-5.1.2",
+    [[
+        INSERT INTO t5f SELECT d, d from t2 LIMIT 1;
+        SELECT * from t5f;
+    ]], {
+        dec1, dec1
+    })
 
--- test:do_execsql_test(
---     "uuid-5.1.3",
---     [[
---         INSERT INTO t5f SELECT (SELECT u from t2 LIMIT 1 OFFSET 1), (SELECT u from t2 LIMIT 1);
---         SELECT * from t5f;
---     ]], {
---         uuid1, uuid1, uuid3, uuid1
---     })
+test:do_execsql_test(
+    "dec-5.1.3",
+    [[
+        INSERT INTO t5f SELECT (SELECT d from t2 LIMIT 1 OFFSET 1), (SELECT d from t2 LIMIT 1);
+        SELECT * from t5f;
+    ]], {
+        dec1, dec1, dec3, dec1
+    })
 
--- -- Check that CHECK constraint can work with UUID.
--- test:do_catchsql_test(
---     "uuid-5.2.1",
---     [[
---         INSERT INTO t5c SELECT 1, u FROM t2 LIMIT 1;
---     ]], {
---         1, "Check constraint failed 'CK': CAST(f AS STRING) != '11111111-1111-1111-1111-111111111111'"
---     })
+-- Check that CHECK constraint can work with DECIMAL.
+test:do_catchsql_test(
+    "dec-5.2.1",
+    [[
+        INSERT INTO t5c SELECT 1, d FROM t2 LIMIT 1 OFFSET 1;
+    ]], {
+        1, "Check constraint failed 'CK': CAST(d AS STRING) != '1000'"
+    })
 
--- test:do_execsql_test(
---     "uuid-5.2.2",
---     [[
---         INSERT INTO t5c SELECT 2, u FROM t2 LIMIT 1 OFFSET 1;
---         SELECT * from t5c;
---     ]], {
---         2, uuid3
---     })
+test:do_execsql_test(
+    "dec-5.2.2",
+    [[
+        INSERT INTO t5c SELECT 2, d FROM t2 LIMIT 1;
+        SELECT * from t5c;
+    ]], {
+        2, dec1
+    })
 
--- -- Check that UNIQUE constraint can work with UUID.
--- test:do_execsql_test(
---     "uuid-5.3.1",
---     [[
---         INSERT INTO t5u SELECT 1, u FROM t2 LIMIT 1;
---         SELECT * from t5u;
---     ]], {
---         1, uuid1
---     })
+-- Check that UNIQUE constraint can work with DECIMAL.
+test:do_execsql_test(
+    "dec-5.3.1",
+    [[
+        INSERT INTO t5u SELECT 1, d FROM t2 LIMIT 1;
+        SELECT * from t5u;
+    ]], {
+        1, dec1
+    })
 
--- test:do_catchsql_test(
---     "uuid-5.3.2",
---     [[
---         INSERT INTO t5u SELECT 2, u FROM t2 LIMIT 1;
---     ]], {
---         1, 'Duplicate key exists in unique index "unique_unnamed_T5U_2" '..
---         'in space "T5U" with old tuple - '..
---         '[1, 11111111-1111-1111-1111-111111111111] and new tuple - '..
---         '[2, 11111111-1111-1111-1111-111111111111]'
---     })
+test:do_catchsql_test(
+    "dec-5.3.2",
+    [[
+        INSERT INTO t5u SELECT 2, d FROM t2 LIMIT 1;
+    ]], {
+        1, 'Duplicate key exists in unique index "unique_unnamed_T5U_2" '..
+        'in space "T5U" with old tuple - '..
+        '[1, -123456789123456789.123456789123456789] and new tuple - '..
+        '[2, -123456789123456789.123456789123456789]'
+    })
 
--- -- Check that built-in functions work with UUIDs as intended.
--- test:do_catchsql_test(
---     "uuid-6.1.1",
---     [[
---         SELECT ABS(u) from t2;
---     ]], {
---         1, "Inconsistent types: expected number got uuid"
---     })
+-- Check that built-in functions work with DECIMAL as intended.
+test:do_execsql_test(
+    "dec-6.1.1",
+    [[
+        SELECT ABS(d) from t2;
+    ]], {
+        dec.abs(dec1), dec3, dec2
+    })
 
--- test:do_catchsql_test(
---     "uuid-6.1.2",
---     [[
---         SELECT AVG(u) from t2;
---     ]], {
---         1, "Type mismatch: can not convert 11111111-1111-1111-1111-111111111111 to number"
---     })
+test:do_catchsql_test(
+    "dec-6.1.2",
+    [[
+        SELECT AVG(d) from t2;
+    ]], {
+        1, "Type mismatch: can not convert 11111111-1111-1111-1111-111111111111 to number"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.3",
---     [[
---         SELECT CHAR(u) from t2;
---     ]], {
---         "\0", "\0", "\0"
---     })
+test:do_execsql_test(
+    "dec-6.1.3",
+    [[
+        SELECT CHAR(d) from t2;
+    ]], {
+        "\0", "\0", "\0"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.4",
---     [[
---         SELECT CHARACTER_LENGTH(u) from t2;
---     ]], {
---         36, 36, 36
---     })
+test:do_execsql_test(
+    "dec-6.1.4",
+    [[
+        SELECT CHARACTER_LENGTH(d) from t2;
+    ]], {
+        36, 36, 36
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.5",
---     [[
---         SELECT CHAR_LENGTH(u) from t2;
---     ]], {
---         36, 36, 36
---     })
+test:do_execsql_test(
+    "dec-6.1.5",
+    [[
+        SELECT CHAR_LENGTH(d) from t2;
+    ]], {
+        36, 36, 36
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.6",
---     [[
---         SELECT COALESCE(NULL, u, NULL, NULL) from t2;
---     ]], {
---         uuid1, uuid3, uuid2
---     })
+test:do_execsql_test(
+    "dec-6.1.6",
+    [[
+        SELECT COALESCE(NULL, d, NULL, NULL) from t2;
+    ]], {
+        dec1, dec3, dec2
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.7",
---     [[
---         SELECT COUNT(u) from t2;
---     ]], {
---         3
---     })
+test:do_execsql_test(
+    "dec-6.1.7",
+    [[
+        SELECT COUNT(u) from t2;
+    ]], {
+        3
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.8",
---     [[
---         SELECT GREATEST((SELECT u FROM t2 LIMIT 1), (SELECT u FROM t2 LIMIT 1 OFFSET 1));
---     ]], {
---         uuid3
---     })
+test:do_execsql_test(
+    "dec-6.1.8",
+    [[
+        SELECT GREATEST((SELECT u FROM t2 LIMIT 1), (SELECT u FROM t2 LIMIT 1 OFFSET 1));
+    ]], {
+        dec3
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.9",
---     [[
---         SELECT GROUP_CONCAT(u) from t2;
---     ]], {
---         "11111111-1111-1111-1111-111111111111,"..
---         "11111111-3333-1111-1111-111111111111,"..
---         "22222222-1111-1111-1111-111111111111"
---     })
+test:do_execsql_test(
+    "dec-6.1.9",
+    [[
+        SELECT GROUP_CONCAT(u) from t2;
+    ]], {
+        "11111111-1111-1111-1111-111111111111,"..
+        "11111111-3333-1111-1111-111111111111,"..
+        "22222222-1111-1111-1111-111111111111"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.10",
---     [[
---         SELECT HEX(u) from t2;
---     ]], {
---         "11111111111111111111111111111111",
---         "11111111333311111111111111111111",
---         "22222222111111111111111111111111"
---     })
+test:do_execsql_test(
+    "dec-6.1.10",
+    [[
+        SELECT HEX(u) from t2;
+    ]], {
+        "11111111111111111111111111111111",
+        "11111111333311111111111111111111",
+        "22222222111111111111111111111111"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.11",
---     [[
---         SELECT IFNULL(u, NULL) from t2;
---     ]], {
---         uuid1, uuid3, uuid2
---     })
+test:do_execsql_test(
+    "dec-6.1.11",
+    [[
+        SELECT IFNULL(u, NULL) from t2;
+    ]], {
+        dec1, dec3, dec2
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.12",
---     [[
---         SELECT LEAST((SELECT u FROM t2 LIMIT 1), (SELECT u FROM t2 LIMIT 1 OFFSET 1));
---     ]], {
---         uuid1
---     })
+test:do_execsql_test(
+    "dec-6.1.12",
+    [[
+        SELECT LEAST((SELECT u FROM t2 LIMIT 1), (SELECT u FROM t2 LIMIT 1 OFFSET 1));
+    ]], {
+        dec1
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.13",
---     [[
---         SELECT LENGTH(u) from t2;
---     ]], {
---         36, 36, 36
---     })
+test:do_execsql_test(
+    "dec-6.1.13",
+    [[
+        SELECT LENGTH(u) from t2;
+    ]], {
+        36, 36, 36
+    })
 
--- test:do_catchsql_test(
---     "uuid-6.1.14",
---     [[
---         SELECT u LIKE 'a' from t2;
---     ]], {
---         1, "Inconsistent types: expected text got uuid"
---     })
+test:do_catchsql_test(
+    "dec-6.1.14",
+    [[
+        SELECT u LIKE 'a' from t2;
+    ]], {
+        1, "Inconsistent types: expected text got dec"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.15",
---     [[
---         SELECT LIKELIHOOD(u, 0.5) from t2;
---     ]], {
---         uuid1, uuid3, uuid2
---     })
+test:do_execsql_test(
+    "dec-6.1.15",
+    [[
+        SELECT LIKELIHOOD(u, 0.5) from t2;
+    ]], {
+        dec1, dec3, dec2
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.16",
---     [[
---         SELECT LIKELY(u) from t2;
---     ]], {
---         uuid1, uuid3, uuid2
---     })
+test:do_execsql_test(
+    "dec-6.1.16",
+    [[
+        SELECT LIKELY(u) from t2;
+    ]], {
+        dec1, dec3, dec2
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.17",
---     [[
---         SELECT LOWER(u) from t2;
---     ]], {
---         "11111111-1111-1111-1111-111111111111",
---         "11111111-3333-1111-1111-111111111111",
---         "22222222-1111-1111-1111-111111111111"
---     })
+test:do_execsql_test(
+    "dec-6.1.17",
+    [[
+        SELECT LOWER(u) from t2;
+    ]], {
+        "11111111-1111-1111-1111-111111111111",
+        "11111111-3333-1111-1111-111111111111",
+        "22222222-1111-1111-1111-111111111111"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.18",
---     [[
---         SELECT MAX(u) from t2;
---     ]], {
---         uuid2
---     })
+test:do_execsql_test(
+    "dec-6.1.18",
+    [[
+        SELECT MAX(u) from t2;
+    ]], {
+        dec2
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.19",
---     [[
---         SELECT MIN(u) from t2;
---     ]], {
---         uuid1
---     })
+test:do_execsql_test(
+    "dec-6.1.19",
+    [[
+        SELECT MIN(u) from t2;
+    ]], {
+        dec1
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.20",
---     [[
---         SELECT NULLIF(u, 1) from t2;
---     ]], {
---         uuid1, uuid3, uuid2
---     })
+test:do_execsql_test(
+    "dec-6.1.20",
+    [[
+        SELECT NULLIF(u, 1) from t2;
+    ]], {
+        dec1, dec3, dec2
+    })
 
--- test:do_catchsql_test(
---     "uuid-6.1.21",
---     [[
---         SELECT POSITION(u, '1') from t2;
---     ]], {
---         1, "Inconsistent types: expected text or varbinary got uuid"
---     })
+test:do_catchsql_test(
+    "dec-6.1.21",
+    [[
+        SELECT POSITION(u, '1') from t2;
+    ]], {
+        1, "Inconsistent types: expected text or varbinary got dec"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.22",
---     [[
---         SELECT RANDOMBLOB(u) from t2;
---     ]], {
---         "", "", ""
---     })
+test:do_execsql_test(
+    "dec-6.1.22",
+    [[
+        SELECT RANDOMBLOB(u) from t2;
+    ]], {
+        "", "", ""
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.23",
---     [[
---         SELECT REPLACE(u, '1', '2') from t2;
---     ]], {
---         "22222222-2222-2222-2222-222222222222",
---         "22222222-3333-2222-2222-222222222222",
---         "22222222-2222-2222-2222-222222222222"
---     })
+test:do_execsql_test(
+    "dec-6.1.23",
+    [[
+        SELECT REPLACE(u, '1', '2') from t2;
+    ]], {
+        "22222222-2222-2222-2222-222222222222",
+        "22222222-3333-2222-2222-222222222222",
+        "22222222-2222-2222-2222-222222222222"
+    })
 
--- test:do_catchsql_test(
---     "uuid-6.1.24",
---     [[
---         SELECT ROUND(u) from t2;
---     ]], {
---         1, "Type mismatch: can not convert 11111111-1111-1111-1111-111111111111 to numeric"
---     })
+test:do_catchsql_test(
+    "dec-6.1.24",
+    [[
+        SELECT ROUND(u) from t2;
+    ]], {
+        1, "Type mismatch: can not convert 11111111-1111-1111-1111-111111111111 to numeric"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.25",
---     [[
---         SELECT SOUNDEX(u) from t2;
---     ]], {
---         "?000", "?000", "?000"
---     })
+test:do_execsql_test(
+    "dec-6.1.25",
+    [[
+        SELECT SOUNDEX(u) from t2;
+    ]], {
+        "?000", "?000", "?000"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.26",
---     [[
---         SELECT SUBSTR(u, 3, 3) from t2;
---     ]], {
---         "111", "111", "222"
---     })
+test:do_execsql_test(
+    "dec-6.1.26",
+    [[
+        SELECT SUBSTR(u, 3, 3) from t2;
+    ]], {
+        "111", "111", "222"
+    })
 
--- test:do_catchsql_test(
---     "uuid-6.1.27",
---     [[
---         SELECT SUM(u) from t2;
---     ]], {
---         1, "Type mismatch: can not convert 11111111-1111-1111-1111-111111111111 to number"
---     })
+test:do_catchsql_test(
+    "dec-6.1.27",
+    [[
+        SELECT SUM(u) from t2;
+    ]], {
+        1, "Type mismatch: can not convert 11111111-1111-1111-1111-111111111111 to number"
+    })
 
--- test:do_catchsql_test(
---     "uuid-6.1.28",
---     [[
---         SELECT TOTAL(u) from t2;
---     ]], {
---         1, "Type mismatch: can not convert 11111111-1111-1111-1111-111111111111 to number"
---     })
+test:do_catchsql_test(
+    "dec-6.1.28",
+    [[
+        SELECT TOTAL(u) from t2;
+    ]], {
+        1, "Type mismatch: can not convert 11111111-1111-1111-1111-111111111111 to number"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.29",
---     [[
---         SELECT TRIM(u) from t2;
---     ]], {
---         "11111111-1111-1111-1111-111111111111",
---         "11111111-3333-1111-1111-111111111111",
---         "22222222-1111-1111-1111-111111111111"
---     })
+test:do_execsql_test(
+    "dec-6.1.29",
+    [[
+        SELECT TRIM(u) from t2;
+    ]], {
+        "11111111-1111-1111-1111-111111111111",
+        "11111111-3333-1111-1111-111111111111",
+        "22222222-1111-1111-1111-111111111111"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.30",
---     [[
---         SELECT TYPEOF(u) from t2;
---     ]], {
---         "uuid", "uuid", "uuid"
---     })
+test:do_execsql_test(
+    "dec-6.1.30",
+    [[
+        SELECT TYPEOF(u) from t2;
+    ]], {
+        "dec", "dec", "dec"
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.31",
---     [[
---         SELECT UNICODE(u) from t2;
---     ]], {
---         49, 49, 50
---     })
+test:do_execsql_test(
+    "dec-6.1.31",
+    [[
+        SELECT UNICODE(u) from t2;
+    ]], {
+        49, 49, 50
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.32",
---     [[
---         SELECT UNLIKELY(u) from t2;
---     ]], {
---         uuid1, uuid3, uuid2
---     })
+test:do_execsql_test(
+    "dec-6.1.32",
+    [[
+        SELECT UNLIKELY(u) from t2;
+    ]], {
+        dec1, dec3, dec2
+    })
 
--- test:do_execsql_test(
---     "uuid-6.1.33",
---     [[
---         SELECT UPPER(u) from t2;
---     ]], {
---         "11111111-1111-1111-1111-111111111111",
---         "11111111-3333-1111-1111-111111111111",
---         "22222222-1111-1111-1111-111111111111"
---     })
+test:do_execsql_test(
+    "dec-6.1.33",
+    [[
+        SELECT UPPER(u) from t2;
+    ]], {
+        "11111111-1111-1111-1111-111111111111",
+        "11111111-3333-1111-1111-111111111111",
+        "22222222-1111-1111-1111-111111111111"
+    })
 
--- test:do_catchsql_test(
---     "uuid-6.1.33",
---     [[
---         SELECT u || u from t2;
---     ]], {
---         1, "Inconsistent types: expected text or varbinary got uuid"
---     })
+test:do_catchsql_test(
+    "dec-6.1.33",
+    [[
+        SELECT u || u from t2;
+    ]], {
+        1, "Inconsistent types: expected text or varbinary got dec"
+    })
 
 -- local func = {language = 'Lua', body = 'function(x) return type(x) end',
 --               returns = 'string', param_list = {'any'}, exports = {'SQL'}}
