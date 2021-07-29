@@ -1,4 +1,4 @@
-name: centos_7
+name: centos_7_arm
 
 on:
   push:
@@ -8,14 +8,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  centos_7:
+  centos_7_arm:
     # We want to run on external PRs, but not on our own internal PRs
     # as they'll be run by the push to the branch.
     if: ( github.event_name == 'push' ||
         github.event.pull_request.head.repo.full_name != github.repository ) &&
         ! endsWith(github.ref, '-notest')
 
-    runs-on: ubuntu-20.04
+    runs-on: odroid-arm64
 
     steps:
       # Permissions correction is needed for self-host runners,
@@ -38,6 +38,7 @@ jobs:
           RELEASE_REPO_S3_DIR: ${{ secrets.RELEASE_REPO_S3_DIR }}
           GPG_SECRET_KEY: ${{ secrets.GPG_SECRET_KEY }}
           GPG_SIGN_KEY: ${{ secrets.GPG_SIGN_KEY }}
+          DOCKER_REPO: 'vitaliiaioffe/tarantool'
           OS: 'el'
           DIST: '7'
         uses: ./.github/actions/pack_and_deploy
