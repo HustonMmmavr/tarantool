@@ -624,6 +624,11 @@ struct fiber {
 			 */
 			struct lua_State *stack;
 			/**
+			 * Optional reference to userdata
+			 * represented current fiber in Lua.
+			 */
+			int ref;
+			/**
 			 * Optional fiber.storage Lua reference.
 			 */
 			int storage_ref;
