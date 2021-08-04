@@ -328,7 +328,14 @@ sql_expr_coll(Parse *parse, Expr *p, bool *is_explicit_coll, uint32_t *coll_id,
 		if (op == TK_FUNCTION) {
 			uint32_t arg_count = p->x.pList == NULL ? 0 :
 					     p->x.pList->nExpr;
-			uint32_t flags = sql_func_flags(p->u.zToken);
+			struct func *func = sql_func_find(p);
+			uint32_t flags = 0;
+			if (func != NULL &&
+			    func->def->language == FUNC_LANGUAGE_SQL_BUILTIN) {
+				struct func_sql_builtin *built_in_func =
+					(struct func_sql_builtin *)func;
+				flags = built_in_func->flags;
+			}
 			if (((flags & SQL_FUNC_DERIVEDCOLL) != 0) &&
 			    arg_count > 0) {
 				/*
