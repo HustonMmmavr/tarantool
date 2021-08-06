@@ -2134,10 +2134,9 @@ case OP_Fetch: {
 case OP_ApplyType: {
 	enum field_type *types = pOp->p4.types;
 	assert(types != NULL);
-	assert(types[pOp->p2] == field_type_MAX);
 	pIn1 = &aMem[pOp->p1];
-	enum field_type type;
-	while((type = *(types++)) != field_type_MAX) {
+	for (int i = 0; i < pOp->p2; ++i, ++pIn1) {
+		enum field_type type = types[i];
 		assert(pIn1 <= &p->aMem[(p->nMem+1 - p->nCursor)]);
 		assert(memIsValid(pIn1));
 		if (mem_cast_implicit(pIn1, type) != 0) {
@@ -2145,7 +2144,6 @@ case OP_ApplyType: {
 				 mem_str(pIn1), field_type_strs[type]);
 			goto abort_due_to_error;
 		}
-		pIn1++;
 	}
 	break;
 }

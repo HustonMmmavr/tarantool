@@ -4375,6 +4375,9 @@ sql_func_flag_is_set(struct func *func, uint16_t flag)
 struct func *
 sql_func_find(struct Expr *expr);
 
+int
+sql_emit_args_types(struct Vdbe *v, int reg, struct func *base, uint32_t argc);
+
 /**
  * Return the parameters of the function with the given name. If the function
  * with the given name does not exist, or the function is not a built-in SQL
