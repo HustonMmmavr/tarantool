@@ -991,6 +991,65 @@ memtx_init_ephemeral_space(struct space *space)
 	memtx_space_add_primary_key(space);
 }
 
+/*
+ * Ongoing index build state with statement used by
+ * corresponding on_rollback triggers to prevent rollbacked changes appearance.
+ */
+struct on_rollback_data {
+	struct memtx_ddl_state *state;
+	struct txn_stmt *stmt;
+};
+
+/*
+ * Struct to allocate by memtx_build_on_replace trigger
+ */
+struct on_rollback_trigger_with_data {
+	struct trigger on_rollback;
+	struct on_rollback_data data;
+};
+
+static int
+memtx_build_on_rollback(struct trigger *trigger, void *event)
+{
+	struct txn *txn = event;
+	(void)txn;
+	struct on_rollback_data *data = trigger->data;
+	struct txn_stmt *stmt = data->stmt;
+	struct memtx_ddl_state *state = data->state;
+	/*
+	* Old tuple's format is valid if it exists.
+	*/
+	assert(stmt != NULL);
+	assert(stmt->old_tuple == NULL ||
+	       tuple_validate(state->format, stmt->old_tuple) == 0);
+
+	struct tuple *delete = NULL;
+	struct tuple *successor = NULL;
+	/*
+	* Use DUP_REPLACE_OR_INSERT mode because if we tried to replace a tuple
+	* with a duplicate at a unique index, this trigger would not be called.
+	*/
+	state->rc = index_replace(state->index, stmt->new_tuple,
+				  stmt->old_tuple, DUP_REPLACE_OR_INSERT,
+				  &delete, &successor);
+	if (state->rc != 0) {
+		diag_move(diag_get(), &state->diag);
+		return 0;
+	}
+	/*
+	* All tuples stored in a memtx space must be
+	* referenced by the primary index.
+	*/
+	if (state->index->def->iid == 0) {
+		if (stmt->old_tuple != NULL)
+			tuple_ref(stmt->old_tuple);
+		if (stmt->new_tuple != NULL)
+			tuple_unref(stmt->new_tuple);
+	}
+
+	return 0;
+}
+
 static int
 memtx_build_on_replace(struct trigger *trigger, void *event)
 {
@@ -1036,6 +1095,21 @@ memtx_build_on_replace(struct trigger *trigger, void *event)
 		if (stmt->old_tuple != NULL)
 			tuple_unref(stmt->old_tuple);
 	}
+	/*
+	 * Set on_rollback trigger on stmt to avoid
+	 * problem when rollbacked changes appears in
+	 * built-in-background index.
+	 */
+	struct on_rollback_trigger_with_data *on_rollback_associates =
+		region_aligned_alloc(&in_txn()->region,
+			sizeof(struct on_rollback_trigger_with_data),
+			alignof(struct on_rollback_trigger_with_data));
+	on_rollback_associates->data.stmt = stmt;
+	on_rollback_associates->data.state = state;
+	trigger_create(&on_rollback_associates->on_rollback,
+		       memtx_build_on_rollback, &on_rollback_associates->data,
+		       NULL);
+	txn_stmt_on_rollback(stmt, &on_rollback_associates->on_rollback);
 	return 0;
 }
 
