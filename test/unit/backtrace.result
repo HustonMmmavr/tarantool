@@ -1,0 +1,21 @@
+	*** test_equal ***
+# Calling baz()
+# Calling baz()
+# Calling baz()
+# Calling baz()
+# Calling baz()
+# Calling baz()
+# Calling baz()
+# Calling baz()
+# Calling baz()
+# Calling baz()
+# Calling baz()
+# Calling bar()
+# Calling foo()
+# Collecting backtrace...
+# ok
+# Resolving entries...
+# ok
+# Comparing entries...
+# ok
+	*** test_equal: done ***
