@@ -4486,7 +4486,6 @@ case OP_AggStep: {
 	}
 	assert(mem_is_null(&t));
 	if (pCtx->skipFlag) {
-		assert(pOp[-1].opcode==OP_CollSeq);
 		i = pOp[-1].p1;
 		if (i) mem_set_bool(&aMem[i], true);
 	}
