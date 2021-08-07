@@ -5436,7 +5436,11 @@ analyzeAggregate(Walker * pWalker, Expr * pExpr)
 						       (pExpr, EP_IntValue));
 						pItem->func =
 							sql_func_find(pExpr);
-						assert(pItem->func != NULL);
+						if (pItem->func == NULL) {
+							pParse->is_aborted =
+								true;
+							return WRC_Abort;
+						}
 						assert(pItem->func->def->
 						       language ==
 						       FUNC_LANGUAGE_SQL_BUILTIN &&

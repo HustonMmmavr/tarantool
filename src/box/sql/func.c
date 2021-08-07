@@ -2167,6 +2167,52 @@ built_in_func_put(struct sql_func_dictionary *dict)
 	}
 }
 
+/**
+ * Check if given expr and given type are compatible. Cases when it is TRUE:
+ *  - when expr contains NULL;
+ *  - when type and type of expr are equal;
+ *  - when type is ANY;
+ *  - when type is SCALAR and type of expr is not MAP or ARRAY;
+ *  - when both type and type of expr are numeric types;
+ *  - when expr is binded value;
+ *  - when type of expr is ANY, which means that is was not resolved;
+ *  - when type of expr is SCALAR, since it could mean that there was implicit
+ *    cast in ephemeral space or in sorter.
+ */
+static bool
+is_compatible(struct Expr *expr, enum field_type type)
+{
+	enum field_type e_type = sql_expr_type(expr);
+	if (expr->op != TK_NULL && type != e_type && type != FIELD_TYPE_ANY &&
+	    !(sql_type_is_numeric(type) && sql_type_is_numeric(e_type)) &&
+	    (type != FIELD_TYPE_SCALAR || e_type == FIELD_TYPE_MAP ||
+	     e_type == FIELD_TYPE_ARRAY) &&  expr->op != TK_VARIABLE &&
+	    e_type != FIELD_TYPE_ANY && e_type != FIELD_TYPE_SCALAR)
+		return false;
+	return true;
+}
+
+static bool
+is_match(struct Expr *expr, struct func_sql_builtin *func)
+{
+	int n = expr->x.pList ? expr->x.pList->nExpr : 0;
+	assert(n > 0);
+	if (func->base.def->param_count == -1) {
+		enum field_type type = func->param_list[0];
+		for (int i = 0; i < n; ++i) {
+			if (!is_compatible(expr->x.pList->a[i].pExpr, type))
+				return false;
+		}
+		return true;
+	}
+	for (int i = 0; i < n; ++i) {
+		enum field_type type = func->param_list[i];
+		if (!is_compatible(expr->x.pList->a[i].pExpr, type))
+			return false;
+	}
+	return true;
+}
+
 static struct func *
 find_built_in_func(struct Expr *expr, struct sql_func_dictionary *dict)
 {
@@ -2187,9 +2233,35 @@ find_built_in_func(struct Expr *expr, struct sql_func_dictionary *dict)
 	}
 	struct func *func = NULL;
 	for (uint32_t i = 0; i < dict->count; ++i) {
-		func = &dict->functions[i]->base;
-		if (func->def->param_count == n)
-			break;
+		struct func_sql_builtin *tmp = dict->functions[i];
+		int argc = tmp->base.def->param_count;
+		if (argc != n && argc != -1)
+			continue;
+		if (n == 0)
+			return &tmp->base;
+		if (!is_match(expr, tmp))
+			continue;
+		/*
+		 * In case we have several options that match the given
+		 * arguments, we choose the one that has an exact match for the
+		 * first argument type. If there are no such implementations,
+		 * the first one found will be selected.
+		 *
+		 * Here we assume that UNSIGNED is part of INTEGER and that
+		 * there will be no functions with UNSIGNED arguments and no
+		 * function that will return UNSIGNED values. INTEGER will be
+		 * used instead.
+		 */
+		enum field_type a = tmp->param_list[0];
+		enum field_type b = sql_expr_type(expr->x.pList->a[0].pExpr);
+		if (func == NULL || a == b ||
+		    (a == FIELD_TYPE_INTEGER && b == FIELD_TYPE_UNSIGNED))
+			func = &tmp->base;
+	}
+	if (func == NULL) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 tt_sprintf("wrong arguments for function %s()", name));
+		return NULL;
 	}
 	return func;
 }
