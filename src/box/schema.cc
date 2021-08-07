@@ -714,7 +714,6 @@ schema_find_name(enum schema_object_type type, uint32_t object_id)
 	default:
 		break;
 	}
-	assert(false);
 	return "(nil)";
 }
 
