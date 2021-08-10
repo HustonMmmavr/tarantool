@@ -10,10 +10,7 @@ net = require('net.box')
 cond = nil
 ---
 ...
-box.schema.func.create('long_function')
----
-...
-box.schema.user.grant('guest', 'execute', 'function', 'long_function')
+box.schema.user.grant('guest', 'execute', 'universe')
 ---
 ...
 function long_function(...) cond = fiber.cond() cond:wait() return ... end
@@ -104,7 +101,26 @@ err:find('Usage') ~= nil
 ---
 - true
 ...
-box.schema.func.drop('long_function')
+-- Future is a table.
+future = c:eval('return 123', {}, {is_async = true})
+---
+...
+type(future) -- table
+---
+- table
+...
+future.abc = 'abc'
+---
+...
+future.abc -- abc
+---
+- abc
+...
+future:wait_result() -- 123
+---
+- [123]
+...
+box.schema.user.revoke('guest', 'execute', 'universe')
 ---
 ...
 c:close()

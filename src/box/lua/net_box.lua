@@ -95,6 +95,38 @@ end
 local function on_push_sync_default() end
 
 --
+-- Future object metatable.
+--
+-- Every method defined in the metatable calls the corresponding method
+-- of the underlying userdata object that contains actual implementation.
+-- This is needed for backward compatibility: client code may expect
+-- a future to be a plain table.
+--
+local future_index = {}
+
+function future_index:is_ready()
+    return self._impl:is_ready()
+end
+
+function future_index:result()
+    return self._impl:result()
+end
+
+function future_index:wait_result(timeout)
+    return self._impl:wait_result(timeout)
+end
+
+function future_index:discard()
+    return self._impl:discard()
+end
+
+function future_index:pairs(timeout)
+    return self._impl:pairs(timeout)
+end
+
+local future_mt = {__index = future_index}
+
+--
 -- Basically, *transport* is a TCP connection speaking one of
 -- Tarantool network protocols. This is a low-level interface.
 -- Primary features:
@@ -280,9 +312,10 @@ local function create_transport(host, port, user, password, callback,
         if err then
             return nil, err
         end
-        return perform_async_request_impl(requests, send_buf, buffer,
-                                          skip_header, method, on_push,
-                                          on_push_ctx, format, ...)
+        local f = perform_async_request_impl(requests, send_buf, buffer,
+                                             skip_header, method, on_push,
+                                             on_push_ctx, format, ...)
+        return setmetatable({_impl = f}, future_mt)
     end
 
     --
