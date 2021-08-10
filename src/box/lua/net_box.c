@@ -134,6 +134,14 @@ struct netbox_request {
 	 * the response hasn't been received yet.
 	 */
 	struct error *error;
+	/**
+	 * User-defined fields: field name -> Lua object reference.
+	 * We allow the user to attach extra information to a future object,
+	 * e.g. a reference to a connection or the invoked method name/args.
+	 * All the information is stored in this table, which is created
+	 * lazily, on the first __newindex invocation.
+	 */
+	struct mh_strnptr_t *index;
 };
 
 static const char netbox_registry_typename[] = "net.box.registry";
@@ -166,6 +174,15 @@ netbox_request_destroy(struct netbox_request *request)
 	luaL_unref(tarantool_L, LUA_REGISTRYINDEX, request->result_ref);
 	if (request->error != NULL)
 		error_unref(request->error);
+	if (request->index != NULL) {
+		struct mh_strnptr_t *h = request->index;
+		mh_int_t k;
+		mh_foreach(h, k) {
+			int ref = (intptr_t)mh_strnptr_node(h, k)->val;
+			luaL_unref(tarantool_L, LUA_REGISTRYINDEX, ref);
+		}
+		mh_strnptr_delete(h);
+	}
 }
 
 /**
@@ -1358,6 +1375,79 @@ luaT_netbox_request_gc(struct lua_State *L)
 	return 0;
 }
 
+static int
+luaT_netbox_request_index(struct lua_State *L)
+{
+	struct netbox_request *request = luaT_check_netbox_request(L, 1);
+	size_t field_name_len;
+	const char *field_name = lua_tolstring(L, 2, &field_name_len);
+	if (field_name == NULL)
+		return luaL_error(L, "invalid index");
+	if (request->index != NULL) {
+		mh_int_t k = mh_strnptr_find_inp(request->index, field_name,
+						 field_name_len);
+		if (k != mh_end(request->index)) {
+			int field_value_ref = (intptr_t)mh_strnptr_node(
+				request->index, k)->val;
+			lua_rawgeti(L, LUA_REGISTRYINDEX, field_value_ref);
+			return 1;
+		}
+	}
+	/* Fall back on metatable methods. */
+	return luaL_getmetafield(L, 1, field_name) != LUA_TNIL ? 1 : 0;
+}
+
+static int
+luaT_netbox_request_newindex(struct lua_State *L)
+{
+	struct netbox_request *request = luaT_check_netbox_request(L, 1);
+	struct mh_strnptr_t *h = request->index;
+	size_t field_name_len;
+	const char *field_name = lua_tolstring(L, 2, &field_name_len);
+	if (field_name == NULL)
+		return luaL_error(L, "invalid index");
+	int field_value_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	if (field_value_ref == LUA_REFNIL) {
+		/* The field is set to nil. Delete it from the index. */
+		if (h == NULL)
+			return 0;
+		mh_int_t k = mh_strnptr_find_inp(h, field_name,
+						 field_name_len);
+		if (k != mh_end(h)) {
+			int ref = (intptr_t)mh_strnptr_node(h, k)->val;
+			luaL_unref(L, LUA_REGISTRYINDEX, ref);
+			mh_strnptr_del(h, k, NULL);
+		}
+		return 0;
+	}
+	if (h == NULL) {
+		/* Lazily create the index on the first invocation. */
+		h = request->index = mh_strnptr_new();
+		if (h == NULL) {
+			luaL_unref(L, LUA_REGISTRYINDEX, field_value_ref);
+			return luaL_error(L, "out of memory");
+		}
+	}
+	/* Insert a reference to the new value into the index. */
+	struct mh_strnptr_node_t node = {
+		.str = field_name,
+		.len = field_name_len,
+		.hash = mh_strn_hash(field_name, field_name_len),
+		.val = (void *)(intptr_t)field_value_ref,
+	};
+	struct mh_strnptr_node_t old_node = { NULL, 0, 0, NULL };
+	struct mh_strnptr_node_t *p_old_node = &old_node;
+	if (mh_strnptr_put(h, &node, &p_old_node,
+			   NULL) == mh_end(h)) {
+		luaL_unref(L, LUA_REGISTRYINDEX, field_value_ref);
+		return luaL_error(L, "out of memory");
+	}
+	/* Drop the reference to the overwritten value. */
+	if (p_old_node != NULL)
+		luaL_unref(L, LUA_REGISTRYINDEX, (intptr_t)old_node.val);
+	return 0;
+}
+
 /**
  * Returns true if the response was received for the given request.
  */
@@ -1602,6 +1692,7 @@ netbox_make_request(struct lua_State *L, int idx,
 	fiber_cond_create(&request->cond);
 	request->result_ref = LUA_NOREF;
 	request->error = NULL;
+	request->index = NULL;
 	if (netbox_request_register(request, registry) != 0) {
 		netbox_request_destroy(request);
 		luaT_error(L);
@@ -1988,6 +2079,8 @@ luaopen_net_box(struct lua_State *L)
 
 	static const struct luaL_Reg netbox_request_meta[] = {
 		{ "__gc",           luaT_netbox_request_gc },
+		{ "__index",        luaT_netbox_request_index },
+		{ "__newindex",     luaT_netbox_request_newindex },
 		{ "is_ready",       luaT_netbox_request_is_ready },
 		{ "result",         luaT_netbox_request_result },
 		{ "wait_result",    luaT_netbox_request_wait_result },
