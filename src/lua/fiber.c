@@ -36,9 +36,18 @@
 #include "backtrace.h"
 #include "tt_static.h"
 
+#include <small/mempool.h>
 #include <lua.h>
 #include <lauxlib.h>
 #include <lualib.h>
+
+static struct mempool on_stop_triggers_pool;
+
+static void
+on_stop_trigger_free(struct trigger *t)
+{
+	mempool_free(&on_stop_triggers_pool, t);
+}
 
 void
 luaL_testcancel(struct lua_State *L)
@@ -110,7 +119,7 @@ lbox_fiber_on_stop(struct trigger *trigger, void *event)
 	luaL_unref(tarantool_L, LUA_REGISTRYINDEX, ref);
 	f->storage.lua.ref = LUA_NOREF;
 	trigger_clear(trigger);
-	free(trigger);
+	on_stop_trigger_free(trigger);
 	return 0;
 }
 
@@ -122,12 +131,13 @@ lbox_pushfiber(struct lua_State *L, struct fiber *f)
 {
 	int ref = f->storage.lua.ref;
 	if (ref <= 0) {
-		struct trigger *t = (struct trigger *)malloc(sizeof(*t));
+		struct trigger *t = mempool_alloc(&on_stop_triggers_pool);;
 		if (t == NULL) {
 			diag_set(OutOfMemory, sizeof(*t), "malloc", "t");
 			luaT_error(L);
 		}
-		trigger_create(t, lbox_fiber_on_stop, NULL, (trigger_f0) free);
+		trigger_create(t, lbox_fiber_on_stop, NULL,
+				 on_stop_trigger_free);
 		trigger_add(&f->on_stop, t);
 
 		uint64_t fid = f->fid;
@@ -921,6 +931,9 @@ static const struct luaL_Reg fiberlib[] = {
 void
 tarantool_lua_fiber_init(struct lua_State *L)
 {
+	mempool_create(&on_stop_triggers_pool, &cord()->slabc,
+				   sizeof(struct trigger));
+
 	luaL_register_module(L, fiberlib_name, fiberlib);
 	lua_pop(L, 1);
 	luaL_register_type(L, fiberlib_name, lbox_fiber_meta);
