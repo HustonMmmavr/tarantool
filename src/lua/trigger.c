@@ -58,7 +58,9 @@ lbox_trigger_destroy(struct trigger *ptr)
 	if (tarantool_L) {
 		struct lbox_trigger *trigger = (struct lbox_trigger *) ptr;
 		luaL_unref(tarantool_L, LUA_REGISTRYINDEX, trigger->ref);
+		TRASH(trigger);
 	}
+	TRASH(ptr);
 	free(ptr);
 }
 
@@ -66,6 +68,8 @@ static int
 lbox_trigger_run(struct trigger *ptr, void *event)
 {
 	struct lbox_trigger *trigger = (struct lbox_trigger *) ptr;
+	lbox_push_event_f push_event = trigger->push_event;
+	lbox_pop_event_f pop_event = trigger->pop_event;
 	/*
 	 * Create a new coro and reference it. Remove it
 	 * from tarantool_L stack, which is a) scarce
@@ -88,16 +92,16 @@ lbox_trigger_run(struct trigger *ptr, void *event)
 	int top = lua_gettop(L);
 	lua_rawgeti(L, LUA_REGISTRYINDEX, trigger->ref);
 	int nargs = 0;
-	if (trigger->push_event != NULL) {
-		nargs = trigger->push_event(L, event);
+	if (push_event != NULL) {
+		nargs = push_event(L, event);
 	}
 	if (luaT_call(L, nargs, LUA_MULTRET)) {
 		luaL_unref(tarantool_L, LUA_REGISTRYINDEX, coro_ref);
 		return -1;
 	}
 	int nret = lua_gettop(L) - top;
-	if (trigger->pop_event != NULL &&
-	    trigger->pop_event(L, nret, event) != 0) {
+	if (pop_event != NULL &&
+	    pop_event(L, nret, event) != 0) {
 		lua_settop(L, top);
 		luaL_unref(tarantool_L, LUA_REGISTRYINDEX, coro_ref);
 		return -1;
@@ -217,6 +221,7 @@ lbox_trigger_reset(struct lua_State *L, int top, struct rlist *list,
 
 	} else if (trg) {
 		trigger_clear(&trg->base);
+		TRASH(trg);
 		free(trg);
 	}
 	return 0;
