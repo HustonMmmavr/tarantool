@@ -82,6 +82,30 @@ enum netbox_method {
 	netbox_method_MAX
 };
 
+static const char *netbox_method_str[] = {
+	[NETBOX_PING]      = "ping",
+	[NETBOX_CALL_16]   = "call_16",
+	[NETBOX_CALL_17]   = "call",
+	[NETBOX_EVAL]      = "eval",
+	[NETBOX_INSERT]    = "insert",
+	[NETBOX_REPLACE]   = "replace",
+	[NETBOX_DELETE]    = "delete",
+	[NETBOX_UPDATE]    = "update",
+	[NETBOX_UPSERT]    = "upsert",
+	[NETBOX_SELECT]    = "select",
+	[NETBOX_EXECUTE]   = "execute",
+	[NETBOX_PREPARE]   = "prepare",
+	[NETBOX_UNPREPARE] = "unprepare",
+	[NETBOX_GET]       = "get",
+	[NETBOX_MIN]       = "min",
+	[NETBOX_MAX]       = "max",
+	[NETBOX_COUNT]     = "count",
+	[NETBOX_BEGIN]     = "begin",
+	[NETBOX_COMMIT]    = "commit",
+	[NETBOX_ROLLBACK]  = "rollback",
+	[NETBOX_INJECT]    = "inject",
+};
+
 struct netbox_registry {
 	/** Next request id. */
 	uint64_t next_sync;
@@ -1420,6 +1444,48 @@ luaT_netbox_request_gc(struct lua_State *L)
 	return 0;
 }
 
+static int
+luaT_netbox_request_serialize(struct lua_State *L)
+{
+	struct netbox_request *request = luaT_check_netbox_request(L, 1);
+	lua_newtable(L);
+	luaL_pushuint64(L, request->sync);
+	lua_setfield(L, -2, "sync");
+	lua_pushstring(L, netbox_method_str[request->method]);
+	lua_setfield(L, -2, "method");
+	lua_rawgeti(L, LUA_REGISTRYINDEX, request->buffer_ref);
+	lua_setfield(L, -2, "buffer");
+	if (request->skip_header) {
+		lua_pushboolean(L, true);
+		lua_setfield(L, -2, "skip_header");
+	}
+	lua_rawgeti(L, LUA_REGISTRYINDEX, request->on_push_ref);
+	lua_setfield(L, -2, "on_push");
+	lua_rawgeti(L, LUA_REGISTRYINDEX, request->on_push_ctx_ref);
+	lua_setfield(L, -2, "on_push_ctx");
+	if (request->result_ref != LUA_NOREF) {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, request->result_ref);
+		lua_setfield(L, -2, "result");
+	}
+	if (request->error != NULL) {
+		diag_set_error(diag_get(), request->error);
+		luaT_pusherror(L, request->error);
+		lua_setfield(L, -2, "error");
+	}
+	return 1;
+}
+
+static int
+luaT_netbox_request_tostring(struct lua_State *L)
+{
+	char buf[32];
+	struct netbox_request *request = luaT_check_netbox_request(L, 1);
+	snprintf(buf, sizeof(buf), "%s: %llu", netbox_request_typename,
+		 (unsigned long long)request->sync);
+	lua_pushstring(L, buf);
+	return 1;
+}
+
 /**
  * Returns true if the response was received for the given request.
  */
@@ -2052,6 +2118,8 @@ luaopen_net_box(struct lua_State *L)
 
 	static const struct luaL_Reg netbox_request_meta[] = {
 		{ "__gc",           luaT_netbox_request_gc },
+		{"__serialize",     luaT_netbox_request_serialize },
+		{"__tostring",      luaT_netbox_request_tostring },
 		{ "is_ready",       luaT_netbox_request_is_ready },
 		{ "result",         luaT_netbox_request_result },
 		{ "wait_result",    luaT_netbox_request_wait_result },

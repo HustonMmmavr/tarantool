@@ -1,3 +1,6 @@
+test_run = require('test_run').new()
+---
+...
 fiber = require 'fiber'
 ---
 ...
@@ -10,10 +13,7 @@ net = require('net.box')
 cond = nil
 ---
 ...
-box.schema.func.create('long_function')
----
-...
-box.schema.user.grant('guest', 'execute', 'function', 'long_function')
+box.schema.user.grant('guest', 'execute', 'universe')
 ---
 ...
 function long_function(...) cond = fiber.cond() cond:wait() return ... end
@@ -104,7 +104,92 @@ err:find('Usage') ~= nil
 ---
 - true
 ...
-box.schema.func.drop('long_function')
+--
+-- __serialize and __tostring future methods
+--
+future = c:call('long_function', {1, 2, 3}, {is_async = true})
+---
+...
+tostring(future)
+---
+- 'net.box.request: 5'
+...
+future
+---
+- on_push_ctx: []
+  method: call
+  sync: 5
+  on_push: 'function: builtin#91'
+...
+finalize_long()
+---
+...
+future:wait_result()
+---
+- [1, 2, 3]
+...
+future
+---
+- method: call
+  on_push_ctx: []
+  result: [1, 2, 3]
+  on_push: 'function: builtin#91'
+  sync: 5
+...
+future = c:eval('assert(false)', {}, {is_async = true})
+---
+...
+tostring(future)
+---
+- 'net.box.request: 6'
+...
+future:wait_result()
+---
+- null
+- 'eval:1: assertion failed!'
+...
+future
+---
+- error: 'eval:1: assertion failed!'
+  method: eval
+  on_push_ctx: []
+  on_push: 'function: builtin#91'
+  sync: 6
+...
+future = c:eval('return 123', {}, {is_async = true, skip_header = true, \
+                                   buffer = require('buffer').ibuf()})
+---
+...
+tostring(future)
+---
+- 'net.box.request: 7'
+...
+future:wait_result()
+---
+- 6
+...
+test_run:cmd("push filter '0x[a-f0-9]+' to '<addr>'")
+---
+- true
+...
+future
+---
+- method: eval
+  result: 6
+  on_push_ctx: []
+  buffer:
+    ibuf:
+      rpos: 'cdata<char *>: <addr>'
+      wpos: 'cdata<char *>: <addr>'
+  on_push: 'function: builtin#91'
+  sync: 7
+  skip_header: true
+...
+test_run:cmd("clear filter")
+---
+- true
+...
+box.schema.user.revoke('guest', 'execute', 'universe')
 ---
 ...
 c:close()

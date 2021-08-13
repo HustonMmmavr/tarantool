@@ -1,3 +1,5 @@
+test_run = require('test_run').new()
+
 fiber = require 'fiber'
 net = require('net.box')
 
@@ -5,8 +7,7 @@ net = require('net.box')
 -- gh-3107: fiber-async netbox.
 --
 cond = nil
-box.schema.func.create('long_function')
-box.schema.user.grant('guest', 'execute', 'function', 'long_function')
+box.schema.user.grant('guest', 'execute', 'universe')
 function long_function(...) cond = fiber.cond() cond:wait() return ... end
 function finalize_long() while not cond do fiber.sleep(0.01) end cond:signal() cond = nil end
 s = box.schema.create_space('test')
@@ -36,7 +37,28 @@ err:find('Usage') ~= nil
 _, err = pcall(future.wait_result, future, '100')
 err:find('Usage') ~= nil
 
-box.schema.func.drop('long_function')
+--
+-- __serialize and __tostring future methods
+--
+future = c:call('long_function', {1, 2, 3}, {is_async = true})
+tostring(future)
+future
+finalize_long()
+future:wait_result()
+future
+future = c:eval('assert(false)', {}, {is_async = true})
+tostring(future)
+future:wait_result()
+future
+future = c:eval('return 123', {}, {is_async = true, skip_header = true, \
+                                   buffer = require('buffer').ibuf()})
+tostring(future)
+future:wait_result()
+test_run:cmd("push filter '0x[a-f0-9]+' to '<addr>'")
+future
+test_run:cmd("clear filter")
+
+box.schema.user.revoke('guest', 'execute', 'universe')
 
 c:close()
 s:drop()
