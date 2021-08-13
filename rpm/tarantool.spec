@@ -89,13 +89,15 @@ BuildRequires: libunwind-devel
 %endif
 
 # Set dependences for tests.
-BuildRequires: python3
-BuildRequires: python3-six
-BuildRequires: python3-gevent
-%if (0%{?sle_version} >= 1500)
-BuildRequires: python3-PyYAML
-%else
-BuildRequires: python3-pyyaml
+%ifnarch aarch64
+    BuildRequires: python3
+    BuildRequires: python3-six
+    BuildRequires: python3-gevent
+    %if (0%{?sle_version} >= 1500)
+    BuildRequires: python3-PyYAML
+    %else
+    BuildRequires: python3-pyyaml
+    %endif
 %endif
 
 # Install prove to run LuaJIT tests.
