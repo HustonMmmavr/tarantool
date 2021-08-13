@@ -1092,26 +1092,13 @@ quoteFunc(sql_context * context, int argc, sql_value ** argv)
 	assert(argc == 1);
 	UNUSED_PARAMETER(argc);
 	switch (argv[0]->type) {
-	case MEM_TYPE_DOUBLE:{
-			double r1, r2;
-			char zBuf[50];
-			r1 = mem_get_double_unsafe(argv[0]);
-			sql_snprintf(sizeof(zBuf), zBuf, "%!.15g", r1);
-			sqlAtoF(zBuf, &r2, 20);
-			if (r1 != r2) {
-				sql_snprintf(sizeof(zBuf), zBuf, "%!.20e",
-						 r1);
-			}
-			sql_result_text(context, zBuf, -1,
-					    SQL_TRANSIENT);
-			break;
-		}
 	case MEM_TYPE_UUID: {
 		char buf[UUID_STR_LEN + 1];
 		tt_uuid_to_string(&argv[0]->u.uuid, &buf[0]);
 		sql_result_text(context, buf, UUID_STR_LEN, SQL_TRANSIENT);
 		break;
 	}
+	case MEM_TYPE_DOUBLE:
 	case MEM_TYPE_UINT:
 	case MEM_TYPE_INT: {
 			sql_result_value(context, argv[0]);
@@ -2094,6 +2081,9 @@ static struct sql_func_definition definitions[] = {
 	 FIELD_TYPE_INTEGER, position_func, NULL},
 	{"PRINTF", -1, {FIELD_TYPE_ANY}, FIELD_TYPE_STRING, printfFunc, 
 	 NULL},
+	{"QUOTE", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, quoteFunc, NULL},
+	{"QUOTE", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, quoteFunc, NULL},
+	{"QUOTE", 1, {FIELD_TYPE_NUMBER}, FIELD_TYPE_NUMBER, quoteFunc, NULL},
 	{"QUOTE", 1, {FIELD_TYPE_ANY}, FIELD_TYPE_STRING, quoteFunc, NULL},
 	{"RANDOM", 0, {}, FIELD_TYPE_INTEGER, randomFunc, NULL},
 	{"RANDOMBLOB", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_VARBINARY,

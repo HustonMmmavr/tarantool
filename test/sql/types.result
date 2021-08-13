@@ -847,7 +847,7 @@ box.execute("SELECT quote(i) FROM t;")
 ---
 - metadata:
   - name: COLUMN_1
-    type: string
+    type: integer
   rows:
   - [18446744073709551613]
 ...
@@ -863,7 +863,7 @@ box.execute("SELECT quote(i) FROM t;")
 ---
 - metadata:
   - name: COLUMN_1
-    type: string
+    type: integer
   rows:
   - [18446744073709551613]
 ...
@@ -1883,12 +1883,12 @@ box.execute("SELECT quote(d) FROM t;")
 ---
 - metadata:
   - name: COLUMN_1
-    type: string
+    type: double
   rows:
-  - ['10.0']
-  - ['-2.0']
-  - ['3.3']
-  - ['1.8e+19']
+  - [10]
+  - [-2]
+  - [3.3]
+  - [18000000000000000000]
 ...
 box.execute("SELECT LEAST(d, 0) FROM t;")
 ---

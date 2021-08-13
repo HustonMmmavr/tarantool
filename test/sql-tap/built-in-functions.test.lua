@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(52)
+test:plan(56)
 
 --
 -- Make sure that number of arguments check is checked properly for SQL built-in
@@ -544,5 +544,50 @@ test:do_test(
         {name = "COLUMN_1", type = "scalar"},
         {name = "COLUMN_2", type = "scalar"},
     })
+
+--
+-- Make sure QUOTE() returns the same number if it takes a number as an
+-- argument, otherwise it returns a string.
+--
+test:do_execsql_test(
+    "builtins-4.1",
+    [[
+        SELECT QUOTE(1), 1 = QUOTE(1);
+    ]],
+    {
+        1, true
+    }
+)
+
+test:do_execsql_test(
+    "builtins-4.2",
+    [[
+        SELECT QUOTE(1.5), 1.5 = QUOTE(1.5);
+    ]],
+    {
+        1.5, true
+    }
+)
+
+test:do_execsql_test(
+    "builtins-4.3",
+    [[
+        SELECT QUOTE(CAST(1 AS NUMBER)),
+        CAST(1 AS NUMBER) = QUOTE(CAST(1 AS NUMBER));
+    ]],
+    {
+        1, true
+    }
+)
+
+test:do_execsql_test(
+    "builtins-4.4",
+    [[
+        SELECT QUOTE('1'), QUOTE(x'31'), QUOTE(true);
+    ]],
+    {
+        "'1'","X'31'","TRUE"
+    }
+)
 
 test:finish_test()
